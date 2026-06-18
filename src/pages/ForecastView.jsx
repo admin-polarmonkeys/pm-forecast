@@ -222,7 +222,9 @@ export default function ForecastView() {
 
   // Lista de SKUs (con nombre) para el filtro multi-select
   const skuOptions = useMemo(
-    () => results.map(r => ({ sku: r.sku, name: r.name })),
+    () => results
+      .map(r => ({ sku: r.sku, name: r.name }))
+      .sort((a, b) => a.sku.localeCompare(b.sku)),
     [results]
   )
   const visibleSkuOptions = useMemo(() => {
