@@ -132,13 +132,14 @@ export default function ForecastView() {
   async function loadData() {
     setLoading(true)
     try {
-      const [products, bom, sales, inventory, params, transit] = await Promise.all([
+      const [products, bom, sales, inventory, params, transit, latestRun] = await Promise.all([
         supabase.from('products').select('*'),
         supabase.from('bom').select('*'),
         supabase.from('sales_history').select('*'),
         supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
         supabase.from('purchase_params').select('*'),
         supabase.from('transit_orders').select('sku, qty'),
+        supabase.from('forecast_runs').select('id').order('created_at', { ascending: false }).limit(1),
       ])
 
       if (products.error) throw products.error
@@ -153,13 +154,37 @@ export default function ForecastView() {
         ? inventory.data.filter(r => r.snapshot_date === latestDate)
         : []
 
+      // Órdenes confirmadas (status "ordenado") de la ÚLTIMA corrida cuentan como tránsito:
+      // ya están pedidas pero todavía no figuran en transit_orders. Se suman al qty_transit existente.
+      // Nota: order_status se guarda como 'ordenado' (no 'ordered') — ver STATUS_OPTIONS en PurchaseOrders.jsx.
+      const lastRunId = latestRun.data?.[0]?.id || null
+      let confirmedTransit = []
+      if (lastRunId) {
+        const { data: confirmedOrders } = await supabase
+          .from('purchase_orders')
+          .select('sku, confirmed_qty')
+          .eq('run_id', lastRunId)
+          .eq('order_status', 'ordenado')
+          .gt('confirmed_qty', 0)
+        // GROUP BY sku: sumamos confirmed_qty por SKU del lado del cliente
+        const sumBySku = {}
+        for (const o of (confirmedOrders || [])) {
+          sumBySku[o.sku] = (sumBySku[o.sku] || 0) + (o.confirmed_qty || 0)
+        }
+        confirmedTransit = Object.entries(sumBySku).map(([sku, qty]) => ({ sku, qty }))
+      }
+
+      // runForecast suma qty por SKU sobre transitOrders, así que concatenar las confirmadas
+      // incrementa el qty_transit de cada SKU sin lógica extra de merge.
+      const mergedTransit = [...(transit.data || []), ...confirmedTransit]
+
       setData({
         products: products.data || [],
         bomRows: bom.data || [],
         salesHistory: sales.data || [],
         inventorySnapshot: latestInventory,
         purchaseParams: params.data || [],
-        transitOrders: transit.data || [],
+        transitOrders: mergedTransit,
       })
     } catch (err) {
       setError(err.message)
@@ -665,8 +690,10 @@ export default function ForecastView() {
                           userSelect: 'none',
                         }}
                         onClick={() => handleSort(col.key)}
+                        title={col.key === 'qty_transit' ? 'Incluye órdenes confirmadas con status Ordenado' : undefined}
                       >
                         {col.label}
+                        {col.key === 'qty_transit' ? ' *' : ''}
                         {sortKey === col.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                         <span
                           onMouseDown={e => startResize(e, col.key)}
@@ -722,6 +749,9 @@ export default function ForecastView() {
                 })}
               </tbody>
             </table>
+          </div>
+          <div style={styles.transitNote}>
+            * Tránsito incluye órdenes confirmadas con status Ordenado (de la última corrida), por eso puede ser mayor a lo registrado en transit_orders.
           </div>
         </>
       )}
@@ -790,6 +820,7 @@ const styles = {
   quickInput: { width: 130, padding: '7px 9px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' },
   quickApplyBtn: { padding: '8px 16px', border: 'none', borderRadius: 8, background: '#1a1a2e', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
+  transitNote: { marginTop: 8, fontSize: 11, color: '#888', fontStyle: 'italic' },
   table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
