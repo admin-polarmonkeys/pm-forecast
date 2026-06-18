@@ -116,6 +116,11 @@ export default function ForecastView() {
   const [activeFilterName, setActiveFilterName] = useState(null)
   const [savingFilter, setSavingFilter] = useState(false)
   const [newFilterName, setNewFilterName] = useState('')
+  // Ajuste rápido (what-if): overrides temporales que se aplican a todos los SKUs sin guardar en Supabase.
+  // Vacío = no se toca ese parámetro. Growth Factor arranca en 1.40.
+  const [quickGrowth, setQuickGrowth] = useState('1.40')
+  const [quickLeadTime, setQuickLeadTime] = useState('')
+  const [quickCoverage, setQuickCoverage] = useState('')
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS)
   const [hoverHandle, setHoverHandle] = useState(null)
 
@@ -225,6 +230,27 @@ export default function ForecastView() {
       setError(err.message)
     }
     setRunning(false)
+  }
+
+  // Ajuste rápido (what-if): pisa growth/lead time/coverage de TODOS los SKUs en el estado local
+  // de purchaseParams y recalcula el forecast al instante. No persiste en Supabase.
+  function applyQuickAdjust() {
+    if (!data) return
+    // Solo aplicamos los campos con valor; un input vacío deja intacto el valor por SKU.
+    const growth = quickGrowth.trim() === '' ? null : Number(quickGrowth)
+    const lead = quickLeadTime.trim() === '' ? null : Number(quickLeadTime)
+    const coverage = quickCoverage.trim() === '' ? null : Number(quickCoverage)
+
+    const updatedParams = (data.purchaseParams || []).map(p => ({
+      ...p,
+      ...(growth != null && !Number.isNaN(growth) ? { growth_factor: growth } : {}),
+      ...(lead != null && !Number.isNaN(lead) ? { lead_time_weeks: lead } : {}),
+      ...(coverage != null && !Number.isNaN(coverage) ? { coverage_target_months: coverage } : {}),
+    }))
+
+    const updatedData = { ...data, purchaseParams: updatedParams }
+    setData(updatedData)
+    setResults(runForecast({ ...updatedData, monthsBack }))
   }
 
   // Agrega el campo calculado days_of_inventory para mostrarlo y poder ordenar por él
@@ -567,6 +593,52 @@ export default function ForecastView() {
             ) : null}
           </div>
 
+          {/* Ajuste rápido (what-if) — solo visible con resultados */}
+          {results.length > 0 && (
+            <div style={styles.quickBar}>
+              <div style={styles.quickHint}>
+                ⚡ Ajuste rápido — aplica a todos los SKUs sin guardar en Parameters
+              </div>
+              <div style={styles.quickControls}>
+                <label style={styles.quickField}>
+                  <span style={styles.quickLabel}>Growth Factor</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.5"
+                    max="3"
+                    value={quickGrowth}
+                    onChange={e => setQuickGrowth(e.target.value)}
+                    style={styles.quickInput}
+                  />
+                </label>
+                <label style={styles.quickField}>
+                  <span style={styles.quickLabel}>Lead Time (sem)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={quickLeadTime}
+                    onChange={e => setQuickLeadTime(e.target.value)}
+                    style={styles.quickInput}
+                  />
+                </label>
+                <label style={styles.quickField}>
+                  <span style={styles.quickLabel}>Coverage Target (meses)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={quickCoverage}
+                    onChange={e => setQuickCoverage(e.target.value)}
+                    style={styles.quickInput}
+                  />
+                </label>
+                <button style={styles.quickApplyBtn} onClick={applyQuickAdjust}>
+                  Aplicar a todos y recalcular
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Table */}
           <div style={styles.tableWrap}>
             <table style={{ ...styles.table, width: totalWidth }}>
@@ -710,6 +782,13 @@ const styles = {
   saveInput: { flex: 1, padding: '6px 8px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 12, boxSizing: 'border-box', minWidth: 0 },
   saveConfirmBtn: { padding: '6px 10px', border: 'none', borderRadius: 6, background: '#4455aa', fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
   saveCancelBtn: { padding: '6px 9px', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff', fontSize: 12, color: '#999', cursor: 'pointer' },
+  quickBar: { background: '#fffbe9', border: '1.5px solid #f3e3a3', borderRadius: 10, padding: 12, marginBottom: 12 },
+  quickHint: { fontSize: 12, fontWeight: 600, color: '#8a6d1a', marginBottom: 8 },
+  quickControls: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
+  quickField: { display: 'flex', flexDirection: 'column', gap: 4 },
+  quickLabel: { fontSize: 11, fontWeight: 600, color: '#666' },
+  quickInput: { width: 130, padding: '7px 9px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' },
+  quickApplyBtn: { padding: '8px 16px', border: 'none', borderRadius: 8, background: '#1a1a2e', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
