@@ -624,7 +624,7 @@ export default function ForecastView() {
                       </td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.avg_monthly_sales_total)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.projected_monthly_demand)}</td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.qty_available_real)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmt(r.qty_available_real)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.qty_transit)}</td>
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600, background: daysColor(days) }}>
                         {days != null ? days : '—'}
