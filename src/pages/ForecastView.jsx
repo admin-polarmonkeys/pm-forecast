@@ -4,6 +4,25 @@ import { runForecast } from '../lib/forecast'
 
 const SUPPLIERS = ['Todos', 'SV', 'HAW', 'GUGU', 'HIM', 'TAR', 'DAR', 'WAT', 'WES', 'NING', 'UP', 'ALI', 'SIR', 'SC']
 
+// Filtros de SKU guardados por el usuario en localStorage. Formato: [{ name, skus: [] }]
+const SAVED_FILTERS_KEY = 'pm_forecast_filters'
+const MAX_SAVED_FILTERS = 10
+
+function loadSavedFilters() {
+  try {
+    const raw = localStorage.getItem(SAVED_FILTERS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    // Validamos la forma de cada entrada por si el storage quedó corrupto
+    return parsed
+      .filter(f => f && typeof f.name === 'string' && Array.isArray(f.skus))
+      .slice(0, MAX_SAVED_FILTERS)
+  } catch {
+    return []
+  }
+}
+
 // Definición de columnas: key = campo del registro, align = alineación.
 // param: true -> columna de input (header gris) para distinguir de los outputs (header oscuro)
 const COLUMNS = [
@@ -92,13 +111,18 @@ export default function ForecastView() {
   const [selectedSkus, setSelectedSkus] = useState(null)
   const [skuFilterOpen, setSkuFilterOpen] = useState(false)
   const [skuSearch, setSkuSearch] = useState('')
+  // Filtros guardados (localStorage), nombre del filtro activo, y estado del input para guardar uno nuevo
+  const [savedFilters, setSavedFilters] = useState(loadSavedFilters)
+  const [activeFilterName, setActiveFilterName] = useState(null)
+  const [savingFilter, setSavingFilter] = useState(false)
+  const [newFilterName, setNewFilterName] = useState('')
   const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS)
   const [hoverHandle, setHoverHandle] = useState(null)
 
   useEffect(() => { loadData() }, [])
 
-  // Al correr un forecast nuevo, volvemos a "todos seleccionados"
-  useEffect(() => { setSelectedSkus(null) }, [results])
+  // Al correr un forecast nuevo, volvemos a "todos seleccionados" y limpiamos el filtro activo
+  useEffect(() => { setSelectedSkus(null); setActiveFilterName(null) }, [results])
 
   async function loadData() {
     setLoading(true)
@@ -239,6 +263,7 @@ export default function ForecastView() {
   const isSkuSelected = sku => selectedSkus === null || selectedSkus.has(sku)
 
   function toggleSku(sku) {
+    setActiveFilterName(null) // edición manual: deja de coincidir con el filtro guardado
     setSelectedSkus(prev => {
       const next = prev === null ? new Set(skuOptions.map(o => o.sku)) : new Set(prev)
       if (next.has(sku)) next.delete(sku)
@@ -246,8 +271,48 @@ export default function ForecastView() {
       return next
     })
   }
-  function selectAllSkus() { setSelectedSkus(null) }
-  function clearAllSkus() { setSelectedSkus(new Set()) }
+  function selectAllSkus() { setSelectedSkus(null); setActiveFilterName(null) }
+  function clearAllSkus() { setSelectedSkus(new Set()); setActiveFilterName(null) }
+
+  // Persiste el array de filtros en localStorage y en el estado a la vez
+  function persistSavedFilters(next) {
+    setSavedFilters(next)
+    try {
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(next))
+    } catch {
+      // localStorage lleno o no disponible: el estado en memoria igual queda actualizado
+    }
+  }
+
+  // Guarda la selección actual con el nombre escrito en el input inline
+  function saveCurrentFilter() {
+    const name = newFilterName.trim()
+    if (!name) return
+    // selectedSkus === null = "todos"; lo materializamos como la lista completa de SKUs
+    const skus = selectedSkus === null ? skuOptions.map(o => o.sku) : [...selectedSkus]
+    // Si ya existe un filtro con ese nombre, lo sobrescribimos en lugar de duplicar
+    const withoutDup = savedFilters.filter(f => f.name !== name)
+    if (withoutDup.length >= MAX_SAVED_FILTERS) {
+      alert(`Máximo ${MAX_SAVED_FILTERS} filtros guardados. Borrá uno antes de guardar otro.`)
+      return
+    }
+    persistSavedFilters([...withoutDup, { name, skus }])
+    setActiveFilterName(name)
+    setSavingFilter(false)
+    setNewFilterName('')
+  }
+
+  // Aplica un filtro guardado, intersectando con los SKUs que existen en el forecast actual
+  function applySavedFilter(filter) {
+    const valid = filter.skus.filter(s => skuOptions.some(o => o.sku === s))
+    setSelectedSkus(new Set(valid))
+    setActiveFilterName(filter.name)
+  }
+
+  function deleteSavedFilter(name) {
+    persistSavedFilters(savedFilters.filter(f => f.name !== name))
+    if (activeFilterName === name) setActiveFilterName(null)
+  }
 
   // Click en header: misma columna -> invierte dirección; columna nueva -> empieza ascendente
   function handleSort(key) {
@@ -375,12 +440,45 @@ export default function ForecastView() {
             </select>
             <div style={styles.skuFilter}>
               <button style={styles.skuFilterBtn} onClick={() => setSkuFilterOpen(o => !o)}>
-                {selectedCount} de {skuOptions.length} SKUs ▾
+                {activeFilterName
+                  ? `Filtro: ${activeFilterName} (${selectedCount} SKUs) ▾`
+                  : `${selectedCount} de ${skuOptions.length} SKUs ▾`}
               </button>
               {skuFilterOpen && (
                 <>
                   <div style={styles.skuBackdrop} onClick={() => setSkuFilterOpen(false)} />
                   <div style={styles.skuPopover}>
+                    {savedFilters.length > 0 && (
+                      <div style={styles.savedSection}>
+                        <div style={styles.savedTitle}>Filtros guardados</div>
+                        <div style={styles.savedChips}>
+                          {savedFilters.map(f => (
+                            <span
+                              key={f.name}
+                              style={{
+                                ...styles.savedChip,
+                                ...(activeFilterName === f.name ? styles.savedChipActive : {}),
+                              }}
+                            >
+                              <button
+                                style={styles.savedChipLabel}
+                                onClick={() => applySavedFilter(f)}
+                                title={`Aplicar "${f.name}" (${f.skus.length} SKUs)`}
+                              >
+                                {f.name}
+                              </button>
+                              <button
+                                style={styles.savedChipDelete}
+                                onClick={() => deleteSavedFilter(f.name)}
+                                title="Borrar filtro"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <input
                       placeholder="Buscar SKU o nombre..."
                       value={skuSearch}
@@ -406,6 +504,48 @@ export default function ForecastView() {
                       ))}
                       {visibleSkuOptions.length === 0 && (
                         <div style={styles.skuEmpty}>Sin coincidencias</div>
+                      )}
+                    </div>
+                    <div style={styles.savedFooter}>
+                      {savingFilter ? (
+                        <div style={styles.saveRow}>
+                          <input
+                            placeholder="Nombre del filtro..."
+                            value={newFilterName}
+                            onChange={e => setNewFilterName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveCurrentFilter()
+                              if (e.key === 'Escape') { setSavingFilter(false); setNewFilterName('') }
+                            }}
+                            style={styles.saveInput}
+                            autoFocus
+                          />
+                          <button
+                            style={styles.saveConfirmBtn}
+                            onClick={saveCurrentFilter}
+                            disabled={!newFilterName.trim()}
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            style={styles.saveCancelBtn}
+                            onClick={() => { setSavingFilter(false); setNewFilterName('') }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          style={styles.saveFilterBtn}
+                          onClick={() => setSavingFilter(true)}
+                          disabled={savedFilters.length >= MAX_SAVED_FILTERS}
+                          title={savedFilters.length >= MAX_SAVED_FILTERS
+                            ? `Máximo ${MAX_SAVED_FILTERS} filtros guardados`
+                            : 'Guardar la selección actual'}
+                        >
+                          + Guardar filtro actual
+                          {savedFilters.length >= MAX_SAVED_FILTERS ? ` (${MAX_SAVED_FILTERS}/${MAX_SAVED_FILTERS})` : ''}
+                        </button>
                       )}
                     </div>
                   </div>
@@ -557,6 +697,19 @@ const styles = {
   skuItemCode: { fontFamily: 'monospace', color: '#333', whiteSpace: 'nowrap' },
   skuItemName: { color: '#999', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   skuEmpty: { padding: 14, color: '#999', fontSize: 12, textAlign: 'center' },
+  savedSection: { marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #eee' },
+  savedTitle: { fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
+  savedChips: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  savedChip: { display: 'inline-flex', alignItems: 'center', background: '#f0f1f5', borderRadius: 6, overflow: 'hidden', border: '1px solid #e0e0e0' },
+  savedChipActive: { background: '#e7ebff', border: '1px solid #4455aa' },
+  savedChipLabel: { border: 'none', background: 'transparent', padding: '4px 4px 4px 8px', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  savedChipDelete: { border: 'none', background: 'transparent', padding: '4px 7px', fontSize: 14, lineHeight: 1, color: '#999', cursor: 'pointer' },
+  savedFooter: { marginTop: 8, paddingTop: 8, borderTop: '1px solid #eee' },
+  saveFilterBtn: { width: '100%', padding: '7px 8px', border: '1.5px dashed #4455aa', borderRadius: 6, background: '#f7f8ff', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer' },
+  saveRow: { display: 'flex', gap: 6, alignItems: 'center' },
+  saveInput: { flex: 1, padding: '6px 8px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 12, boxSizing: 'border-box', minWidth: 0 },
+  saveConfirmBtn: { padding: '6px 10px', border: 'none', borderRadius: 6, background: '#4455aa', fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  saveCancelBtn: { padding: '6px 9px', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff', fontSize: 12, color: '#999', cursor: 'pointer' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
