@@ -52,7 +52,7 @@ function loadSavedFilters() {
   }
 }
 
-const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12, growthFactor: 1.4 }
+const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12, growthFactor: 1.4, leadTimeOverride: '' }
 
 export default function OrderPlan() {
   const [data, setData] = useState(null)
@@ -146,7 +146,11 @@ export default function OrderPlan() {
   // Plan de compras por SKU
   const plan = useMemo(() => {
     if (!data) return []
-    const { coverageTarget, orderFrequency, growthFactor } = applied
+    const { coverageTarget, orderFrequency, growthFactor, leadTimeOverride } = applied
+    // Override global de lead time: si tiene valor numérico, pisa el lead time de cada SKU
+    const globalLead = leadTimeOverride !== '' && leadTimeOverride != null && !Number.isNaN(Number(leadTimeOverride))
+      ? Number(leadTimeOverride)
+      : null
 
     const invBySku = {}
     for (const i of data.inventory) invBySku[i.sku] = i
@@ -169,8 +173,10 @@ export default function OrderPlan() {
       const moq = params.moq && params.moq > 0 ? params.moq : 1
       const fob = params.fob_cost_usd ?? null
       const landed = params.landed_cost_usd ?? null
-      // Lead time del proveedor (semanas). Null o 0 -> 0.
-      const leadWeeks = params.lead_time_weeks && params.lead_time_weeks > 0 ? params.lead_time_weeks : 0
+      // Lead time: override global si está seteado; si no, el del proveedor (null o 0 -> 0)
+      const leadWeeks = globalLead != null
+        ? globalLead
+        : (params.lead_time_weeks && params.lead_time_weeks > 0 ? params.lead_time_weeks : 0)
       const currentStock = (invBySku[prod.sku]?.qty_available_real || 0) + (transitBySku[prod.sku] || 0)
 
       // Simulación de inventario corrido: incluye órdenes previas ya colocadas
@@ -591,6 +597,7 @@ export default function OrderPlan() {
           { key: 'orderFrequency', label: 'Order Frequency (months)', step: 1 },
           { key: 'planningHorizon', label: 'Planning Horizon (months)', step: 1 },
           { key: 'growthFactor', label: 'Growth Factor', step: 0.05 },
+          { key: 'leadTimeOverride', label: 'Lead Time (weeks)', step: 1, placeholder: '—', note: 'Leave blank to use individual SKU lead times' },
         ].map(f => (
           <label key={f.key} style={styles.paramField}>
             <span style={styles.paramLabel}>{f.label}</span>
@@ -598,10 +605,12 @@ export default function OrderPlan() {
               type="number"
               step={f.step}
               min="0"
+              placeholder={f.placeholder}
               value={form[f.key]}
               onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value === '' ? '' : Number(e.target.value) }))}
               style={styles.paramInput}
             />
+            {f.note && <span style={styles.paramNote}>{f.note}</span>}
           </label>
         ))}
         {plan.length > 0 && (
@@ -933,9 +942,10 @@ const styles = {
   exportBtn: { background: '#1F3864', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20 },
   paramsBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 14, background: '#fff', borderRadius: 10, padding: 16, marginBottom: 24, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  paramField: { display: 'flex', flexDirection: 'column', gap: 4 },
+  paramField: { display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' },
   paramLabel: { fontSize: 11, fontWeight: 600, color: '#666' },
   paramInput: { width: 150, padding: '8px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' },
+  paramNote: { position: 'absolute', top: '100%', left: 0, marginTop: 3, fontSize: 10, color: '#888', whiteSpace: 'nowrap', fontWeight: 400 },
   recalcBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
   summaryCard: { background: '#fff', borderRadius: 10, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
