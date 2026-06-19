@@ -558,94 +558,6 @@ export default function OrderPlan() {
           </p>
         </div>
         <div style={styles.headerControls}>
-          {plan.length > 0 && (
-            <div style={styles.skuFilter}>
-              <button style={styles.skuFilterBtn} onClick={() => setSkuFilterOpen(o => !o)}>
-                {activeFilterName
-                  ? `Filter: ${activeFilterName} (${selectedCount} SKUs) ▼`
-                  : `${selectedCount} of ${skuOptions.length} SKUs ▼`}
-              </button>
-              {skuFilterOpen && (
-                <>
-                  <div style={styles.skuBackdrop} onClick={() => setSkuFilterOpen(false)} />
-                  <div style={styles.skuPopover}>
-                    {savedFilters.length > 0 && (
-                      <div style={styles.savedSection}>
-                        <div style={styles.savedTitle}>Saved Filters</div>
-                        <div style={styles.savedChips}>
-                          {savedFilters.map(f => (
-                            <span
-                              key={f.name}
-                              style={{ ...styles.savedChip, ...(activeFilterName === f.name ? styles.savedChipActive : {}) }}
-                            >
-                              <button
-                                style={styles.savedChipLabel}
-                                onClick={() => applySavedFilter(f)}
-                                title={`Apply "${f.name}" (${f.skus.length} SKUs)`}
-                              >
-                                {f.name}
-                              </button>
-                              <button style={styles.savedChipDelete} onClick={() => deleteSavedFilter(f.name)} title="Delete filter">×</button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <input
-                      placeholder="Search SKU or name..."
-                      value={skuSearch}
-                      onChange={e => setSkuSearch(e.target.value)}
-                      style={styles.skuSearchInput}
-                      autoFocus
-                    />
-                    <div style={styles.skuActions}>
-                      <button style={styles.skuActionBtn} onClick={selectAllSkus}>Select all</button>
-                      <button style={styles.skuActionBtn} onClick={clearAllSkus}>Clear all</button>
-                    </div>
-                    <div style={styles.skuList}>
-                      {visibleSkuOptions.map(o => (
-                        <label key={o.sku} style={styles.skuItem}>
-                          <input type="checkbox" checked={isSkuSelected(o.sku)} onChange={() => toggleSku(o.sku)} />
-                          <span style={styles.skuItemCode}>{o.sku}</span>
-                          <span style={styles.skuItemName}>{o.name}</span>
-                        </label>
-                      ))}
-                      {visibleSkuOptions.length === 0 && <div style={styles.skuEmpty}>No matches</div>}
-                    </div>
-                    <div style={styles.savedFooter}>
-                      {savingFilter ? (
-                        <div style={styles.saveRow}>
-                          <input
-                            placeholder="Filter name..."
-                            value={newFilterName}
-                            onChange={e => setNewFilterName(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter') saveCurrentFilter()
-                              if (e.key === 'Escape') { setSavingFilter(false); setNewFilterName('') }
-                            }}
-                            style={styles.saveInput}
-                            autoFocus
-                          />
-                          <button style={styles.saveConfirmBtn} onClick={saveCurrentFilter} disabled={!newFilterName.trim()}>Save</button>
-                          <button style={styles.saveCancelBtn} onClick={() => { setSavingFilter(false); setNewFilterName('') }}>✕</button>
-                        </div>
-                      ) : (
-                        <button
-                          style={styles.saveFilterBtn}
-                          onClick={() => setSavingFilter(true)}
-                          disabled={savedFilters.length >= MAX_SAVED_FILTERS}
-                          title={savedFilters.length >= MAX_SAVED_FILTERS ? `Maximum ${MAX_SAVED_FILTERS} saved filters` : 'Save current selection'}
-                        >
-                          + Save current filter
-                          {savedFilters.length >= MAX_SAVED_FILTERS ? ` (${MAX_SAVED_FILTERS}/${MAX_SAVED_FILTERS})` : ''}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
           <button
             style={{ ...styles.toggleBtn, ...(groupBySupplier ? styles.toggleBtnActive : {}) }}
             onClick={() => setGroupBySupplier(g => !g)}
@@ -680,6 +592,94 @@ export default function OrderPlan() {
             />
           </label>
         ))}
+        {plan.length > 0 && (
+          <div style={styles.skuFilter}>
+            <button style={styles.skuFilterBtn} onClick={() => setSkuFilterOpen(o => !o)}>
+              {activeFilterName
+                ? `Filter: ${activeFilterName} (${selectedCount} SKUs) ▼`
+                : `${selectedCount} of ${skuOptions.length} SKUs ▼`}
+            </button>
+            {skuFilterOpen && (
+              <>
+                <div style={styles.skuBackdrop} onClick={() => setSkuFilterOpen(false)} />
+                <div style={styles.skuPopover}>
+                  {savedFilters.length > 0 && (
+                    <div style={styles.savedSection}>
+                      <div style={styles.savedTitle}>Saved Filters</div>
+                      <div style={styles.savedChips}>
+                        {savedFilters.map(f => (
+                          <span
+                            key={f.name}
+                            style={{ ...styles.savedChip, ...(activeFilterName === f.name ? styles.savedChipActive : {}) }}
+                          >
+                            <button
+                              style={styles.savedChipLabel}
+                              onClick={() => applySavedFilter(f)}
+                              title={`Apply "${f.name}" (${f.skus.length} SKUs)`}
+                            >
+                              {f.name}
+                            </button>
+                            <button style={styles.savedChipDelete} onClick={() => deleteSavedFilter(f.name)} title="Delete filter">×</button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <input
+                    placeholder="Search SKU or name..."
+                    value={skuSearch}
+                    onChange={e => setSkuSearch(e.target.value)}
+                    style={styles.skuSearchInput}
+                    autoFocus
+                  />
+                  <div style={styles.skuActions}>
+                    <button style={styles.skuActionBtn} onClick={selectAllSkus}>Select all</button>
+                    <button style={styles.skuActionBtn} onClick={clearAllSkus}>Clear all</button>
+                  </div>
+                  <div style={styles.skuList}>
+                    {visibleSkuOptions.map(o => (
+                      <label key={o.sku} style={styles.skuItem}>
+                        <input type="checkbox" checked={isSkuSelected(o.sku)} onChange={() => toggleSku(o.sku)} />
+                        <span style={styles.skuItemCode}>{o.sku}</span>
+                        <span style={styles.skuItemName}>{o.name}</span>
+                      </label>
+                    ))}
+                    {visibleSkuOptions.length === 0 && <div style={styles.skuEmpty}>No matches</div>}
+                  </div>
+                  <div style={styles.savedFooter}>
+                    {savingFilter ? (
+                      <div style={styles.saveRow}>
+                        <input
+                          placeholder="Filter name..."
+                          value={newFilterName}
+                          onChange={e => setNewFilterName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') saveCurrentFilter()
+                            if (e.key === 'Escape') { setSavingFilter(false); setNewFilterName('') }
+                          }}
+                          style={styles.saveInput}
+                          autoFocus
+                        />
+                        <button style={styles.saveConfirmBtn} onClick={saveCurrentFilter} disabled={!newFilterName.trim()}>Save</button>
+                        <button style={styles.saveCancelBtn} onClick={() => { setSavingFilter(false); setNewFilterName('') }}>✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        style={styles.saveFilterBtn}
+                        onClick={() => setSavingFilter(true)}
+                        disabled={savedFilters.length >= MAX_SAVED_FILTERS}
+                        title={savedFilters.length >= MAX_SAVED_FILTERS ? `Maximum ${MAX_SAVED_FILTERS} saved filters` : 'Save current selection'}
+                      >
+                        + Save current filter
+                        {savedFilters.length >= MAX_SAVED_FILTERS ? ` (${MAX_SAVED_FILTERS}/${MAX_SAVED_FILTERS})` : ''}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <button style={styles.recalcBtn} onClick={() => setApplied(form)}>Recalculate</button>
       </div>
 
@@ -893,7 +893,7 @@ const styles = {
   skuFilter: { position: 'relative' },
   skuFilterBtn: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, background: '#fff', cursor: 'pointer', fontWeight: 600, color: '#333', whiteSpace: 'nowrap' },
   skuBackdrop: { position: 'fixed', inset: 0, zIndex: 10 },
-  skuPopover: { position: 'absolute', top: '100%', right: 0, marginTop: 6, background: '#fff', border: '1.5px solid #e0e0e0', borderRadius: 10, boxShadow: '0 6px 20px rgba(0,0,0,0.14)', padding: 10, width: 300, zIndex: 20 },
+  skuPopover: { position: 'absolute', top: '100%', left: 0, marginTop: 6, background: '#fff', border: '1.5px solid #e0e0e0', borderRadius: 10, boxShadow: '0 6px 20px rgba(0,0,0,0.14)', padding: 10, width: 300, zIndex: 20 },
   skuSearchInput: { width: '100%', padding: '7px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, marginBottom: 8, boxSizing: 'border-box' },
   skuActions: { display: 'flex', gap: 8, marginBottom: 8 },
   skuActionBtn: { flex: 1, padding: '6px 8px', border: '1px solid #e0e0e0', borderRadius: 6, background: '#f7f7f9', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer' },
