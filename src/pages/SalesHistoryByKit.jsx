@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 
-const MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 const NO_FAMILY = '(Sin familia)'
 
 // Colores base de la escala
@@ -141,7 +141,7 @@ export default function SalesHistoryByKit() {
     return c && Object.values(c).some(v => v > 0)
   }
 
-  if (loading) return <div style={styles.loading}>Cargando datos...</div>
+  if (loading) return <div style={styles.loading}>Loading data...</div>
 
   const q = search.trim().toLowerCase()
 
@@ -169,8 +169,8 @@ export default function SalesHistoryByKit() {
           <h1 style={styles.pageTitle}>📦 Sales History by Kit</h1>
           <p style={styles.pageDesc}>
             {kits.length > 0
-              ? `${families.length} familias · ${kits.length} kits · ${months.length} meses`
-              : 'Sin kits en el catálogo — sube productos primero'}
+              ? `${families.length} families · ${kits.length} kits · ${months.length} months`
+              : 'No kits in the catalog — upload products first'}
           </p>
         </div>
       </div>
@@ -179,7 +179,7 @@ export default function SalesHistoryByKit() {
 
       <div style={styles.filters}>
         <input
-          placeholder="Buscar SKU o nombre..."
+          placeholder="Search SKU or name..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={styles.searchInput}
@@ -190,16 +190,16 @@ export default function SalesHistoryByKit() {
             checked={onlyWithSales}
             onChange={e => setOnlyWithSales(e.target.checked)}
           />
-          &nbsp;Solo kits con al menos una venta
+          &nbsp;Only kits with at least one sale
         </label>
-        <span style={styles.filterTotal}>{visibleFamilies.length} familias visibles</span>
+        <span style={styles.filterTotal}>{visibleFamilies.length} families visible</span>
       </div>
 
       {months.length === 0 ? (
         <div style={styles.empty}>
-          <p>No hay ventas de kits cargadas todavía.</p>
+          <p>No kit sales loaded yet.</p>
           <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-            Sube un archivo de ventas desde "Upload Data".
+            Upload a sales file from "Upload Data".
           </p>
         </div>
       ) : (
@@ -207,8 +207,8 @@ export default function SalesHistoryByKit() {
           <table style={styles.table}>
             <thead>
               <tr style={styles.thead}>
-                <th style={{ ...styles.th, ...styles.stickyCol, ...styles.stickyHead, textAlign: 'left' }}>Familia / SKU</th>
-                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Nombre</th>
+                <th style={{ ...styles.th, ...styles.stickyCol, ...styles.stickyHead, textAlign: 'left' }}>Family / SKU</th>
+                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Name</th>
                 {months.map(m => (
                   <th key={m.key} style={{ ...styles.th, textAlign: 'right' }}>
                     {MONTH_ABBR[m.month - 1]} {String(m.year).slice(2)}
@@ -229,7 +229,7 @@ export default function SalesHistoryByKit() {
                       <td colSpan={2} style={{ ...styles.familyStickyCell }}>
                         <span style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</span>
                         <strong>{family.variant_group}</strong>
-                        <span style={styles.kitCount}>{family.kits.length} variantes</span>
+                        <span style={styles.kitCount}>{family.kits.length} variants</span>
                       </td>
                       {months.map(m => {
                         const v = family.familyMonthly[m.key]

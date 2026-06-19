@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { calcAvgMonthlySales } from '../lib/forecast'
 
-const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function fmt(n) {
   if (n == null) return '—'
@@ -48,7 +48,7 @@ export default function OrderPlan() {
   // Filtros tipo autofiltro de Excel
   const [fSku, setFSku] = useState('')
   const [fName, setFName] = useState('')
-  const [fSupplier, setFSupplier] = useState('Todos')
+  const [fSupplier, setFSupplier] = useState('All')
   const [fQty, setFQty] = useState({ min: '', max: '' })
   const [fFob, setFFob] = useState({ min: '', max: '' })
   const [fLanded, setFLanded] = useState({ min: '', max: '' })
@@ -58,6 +58,7 @@ export default function OrderPlan() {
 
   const [groupBySupplier, setGroupBySupplier] = useState(false)
   const [collapsed, setCollapsed] = useState(() => new Set())
+  const [monthlyOpen, setMonthlyOpen] = useState(true) // Monthly Summary expandido por defecto
 
   useEffect(() => { loadData() }, [])
 
@@ -165,7 +166,7 @@ export default function OrderPlan() {
 
   const suppliers = useMemo(() => {
     const set = new Set(plan.map(r => r.supplier).filter(Boolean))
-    return ['Todos', ...[...set].sort()]
+    return ['All', ...[...set].sort()]
   }, [plan])
 
   // Aplica filtros de autofiltro
@@ -178,7 +179,7 @@ export default function OrderPlan() {
     return plan.filter(r => {
       if (fSku && !r.sku.toLowerCase().includes(fSku.toLowerCase())) return false
       if (fName && !(r.name || '').toLowerCase().includes(fName.toLowerCase())) return false
-      if (fSupplier !== 'Todos' && r.supplier !== fSupplier) return false
+      if (fSupplier !== 'All' && r.supplier !== fSupplier) return false
       if (!inRange(r.totalQty, fQty)) return false
       if (!inRange(r.totalFob, fFob)) return false
       if (!inRange(r.totalLanded, fLanded)) return false
@@ -226,6 +227,37 @@ export default function OrderPlan() {
     return { fob, landed, events, skusWithOrder }
   }, [filtered])
 
+  // Resumen mensual: una fila por mes del horizonte; agrega las órdenes que caen en ese mes.
+  const monthlySummary = useMemo(() => {
+    const now = new Date()
+    const months = []
+    for (let m = 0; m < applied.planningHorizon; m++) {
+      const md = addMonths(now, m)
+      const y = md.getFullYear(), mo = md.getMonth()
+      const skus = []
+      let qty = 0, fob = 0, landed = 0
+      for (const r of sorted) {
+        for (const o of r.orders) {
+          if (o.hasOrder && o.date.getFullYear() === y && o.date.getMonth() === mo) {
+            skus.push(r.sku)
+            qty += o.qty
+            fob += o.qty * (r.fob || 0)
+            landed += o.qty * (r.landed || 0)
+          }
+        }
+      }
+      months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: skus.length, qty, fob, landed, skus })
+    }
+    return months
+  }, [sorted, applied.planningHorizon])
+
+  const monthlyTotals = useMemo(() => ({
+    count: monthlySummary.reduce((s, r) => s + r.count, 0),
+    qty: monthlySummary.reduce((s, r) => s + r.qty, 0),
+    fob: monthlySummary.reduce((s, r) => s + r.fob, 0),
+    landed: monthlySummary.reduce((s, r) => s + r.landed, 0),
+  }), [monthlySummary])
+
   function handleSort(key) {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else {
@@ -247,12 +279,12 @@ export default function OrderPlan() {
   const columns = useMemo(() => {
     const cols = [
       { key: 'sku', label: 'SKU' },
-      { key: 'name', label: 'Nombre' },
-      { key: 'supplier', label: 'Proveedor' },
+      { key: 'name', label: 'Name' },
+      { key: 'supplier', label: 'Supplier' },
     ]
     for (let i = 0; i < numOrders; i++) {
-      cols.push({ key: `order_${i}_date`, label: `Orden ${i + 1} Fecha`, num: true })
-      cols.push({ key: `order_${i}_qty`, label: `Orden ${i + 1} Cant`, num: true })
+      cols.push({ key: `order_${i}_date`, label: `Order ${i + 1} Date`, num: true })
+      cols.push({ key: `order_${i}_qty`, label: `Order ${i + 1} Qty`, num: true })
     }
     cols.push({ key: 'totalQty', label: 'Total Qty', num: true })
     cols.push({ key: 'totalFob', label: 'Total FOB', num: true })
@@ -317,7 +349,7 @@ export default function OrderPlan() {
 
     // Hoja RESUMEN: una fila por fecha de orden
     const resumenCols = [
-      { header: 'Fecha', get: r => r.fecha, w: 14 },
+      { header: 'Date', get: r => r.fecha, w: 14 },
       { header: '# SKUs', get: r => r.skus, w: 10, z: '#,##0' },
       { header: 'Total FOB', get: r => r.fob, w: 16, z: '"$"#,##0.00' },
       { header: 'Total Landed', get: r => r.landed, w: 16, z: '"$"#,##0.00' },
@@ -333,13 +365,13 @@ export default function OrderPlan() {
     })
     const resumenTotal = ['TOTAL', resumenRows.reduce((s, r) => s + r.skus, 0),
       resumenRows.reduce((s, r) => s + r.fob, 0), resumenRows.reduce((s, r) => s + r.landed, 0)]
-    XLSX.utils.book_append_sheet(wb, buildSheet(resumenCols, resumenRows, resumenTotal), 'RESUMEN')
+    XLSX.utils.book_append_sheet(wb, buildSheet(resumenCols, resumenRows, resumenTotal), 'SUMMARY')
 
     // Una hoja por fecha con los SKUs ordenados ese día
     const dateCols = [
       { header: 'SKU', get: r => r.sku, w: 14 },
-      { header: 'Nombre', get: r => r.name, w: 30 },
-      { header: 'Proveedor', get: r => r.supplier, w: 12 },
+      { header: 'Name', get: r => r.name, w: 30 },
+      { header: 'Supplier', get: r => r.supplier, w: 12 },
       { header: 'Qty', get: r => r.qty, w: 10, z: '#,##0' },
       { header: 'FOB', get: r => r.fob, w: 14, z: '"$"#,##0.00' },
       { header: 'Landed', get: r => r.landed, w: 14, z: '"$"#,##0.00' },
@@ -361,7 +393,7 @@ export default function OrderPlan() {
     XLSX.writeFile(wb, `PM_Order_Plan_${today}.xlsx`)
   }
 
-  if (loading) return <div style={styles.loading}>Cargando...</div>
+  if (loading) return <div style={styles.loading}>Loading...</div>
 
   // Render de una fila de SKU (reutilizable con/sin agrupamiento)
   const renderRow = r => (
@@ -408,8 +440,8 @@ export default function OrderPlan() {
         <div>
           <h1 style={styles.pageTitle}>📅 Order Plan</h1>
           <p style={styles.pageDesc}>
-            {data?.snapshotDate ? `Inventario al ${data.snapshotDate}` : 'Sin datos de inventario'}
-            {' · '}Plan a {applied.planningHorizon} meses, orden cada {applied.orderFrequency}
+            {data?.snapshotDate ? `Inventory as of ${data.snapshotDate}` : 'No inventory data'}
+            {' · '}{applied.planningHorizon}-month plan, order every {applied.orderFrequency}
           </p>
         </div>
         <div style={styles.headerControls}>
@@ -417,7 +449,7 @@ export default function OrderPlan() {
             style={{ ...styles.toggleBtn, ...(groupBySupplier ? styles.toggleBtnActive : {}) }}
             onClick={() => setGroupBySupplier(g => !g)}
           >
-            {groupBySupplier ? '✓ ' : ''}Agrupar por Proveedor
+            {groupBySupplier ? '✓ ' : ''}Group by Supplier
           </button>
           {plan.length > 0 && (
             <button style={styles.exportBtn} onClick={exportToExcel}>⬇ Exportar a Excel</button>
@@ -430,9 +462,9 @@ export default function OrderPlan() {
       {/* Barra de parámetros */}
       <div style={styles.paramsBar}>
         {[
-          { key: 'coverageTarget', label: 'Coverage Target (meses)', step: 1 },
-          { key: 'orderFrequency', label: 'Order Frequency (meses)', step: 1 },
-          { key: 'planningHorizon', label: 'Planning Horizon (meses)', step: 1 },
+          { key: 'coverageTarget', label: 'Coverage Target (months)', step: 1 },
+          { key: 'orderFrequency', label: 'Order Frequency (months)', step: 1 },
+          { key: 'planningHorizon', label: 'Planning Horizon (months)', step: 1 },
           { key: 'growthFactor', label: 'Growth Factor', step: 0.05 },
         ].map(f => (
           <label key={f.key} style={styles.paramField}>
@@ -447,27 +479,72 @@ export default function OrderPlan() {
             />
           </label>
         ))}
-        <button style={styles.recalcBtn} onClick={() => setApplied(form)}>Recalcular</button>
+        <button style={styles.recalcBtn} onClick={() => setApplied(form)}>Recalculate</button>
       </div>
 
       {plan.length > 0 && (
         <>
+          {/* Monthly Summary (collapsible, expanded by default) */}
+          <div style={styles.monthlyWrap}>
+            <div style={styles.monthlyHeader} onClick={() => setMonthlyOpen(o => !o)}>
+              <span>Monthly Summary {monthlyOpen ? '▼' : '►'}</span>
+            </div>
+            {monthlyOpen && (
+              <div style={styles.tableWrap}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.thead}>
+                      <th style={{ ...styles.th, textAlign: 'left' }}>Month</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}># SKUs to Order</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Total Qty</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Total FOB</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
+                      <th style={{ ...styles.th, textAlign: 'left' }}>SKUs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlySummary.map(m => (
+                      <tr key={m.label} style={{ ...styles.tr, ...(m.landed > 50000 ? styles.monthlyHighlight : {}) }}>
+                        <td style={{ ...styles.td, fontWeight: 600 }}>{m.label}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.count > 0 ? fmt(m.count) : '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.qty > 0 ? fmt(m.qty) : '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.fob > 0 ? fmtCurrency(m.fob) : '—'}</td>
+                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{m.landed > 0 ? fmtCurrency(m.landed) : '—'}</td>
+                        <td style={{ ...styles.td, color: '#666', fontSize: 12, whiteSpace: 'normal', maxWidth: 360 }}>
+                          {m.skus.join(', ') || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={styles.monthlyTotalRow}>
+                      <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmt(monthlyTotals.count)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmt(monthlyTotals.qty)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtCurrency(monthlyTotals.fob)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmtCurrency(monthlyTotals.landed)}</td>
+                      <td style={styles.td} />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           <div style={styles.summaryGrid}>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmtCurrency(summary.fob)}</div>
-              <div style={styles.summaryLabel}>Inversión total FOB</div>
+              <div style={styles.summaryLabel}>Total investment FOB</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmtCurrency(summary.landed)}</div>
-              <div style={styles.summaryLabel}>Inversión total Landed</div>
+              <div style={styles.summaryLabel}>Total investment Landed</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmt(summary.events)}</div>
-              <div style={styles.summaryLabel}>Eventos de orden</div>
+              <div style={styles.summaryLabel}>Order events</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmt(summary.skusWithOrder)}</div>
-              <div style={styles.summaryLabel}>SKUs con al menos una orden</div>
+              <div style={styles.summaryLabel}>SKUs with at least one order</div>
             </div>
           </div>
 
@@ -489,10 +566,10 @@ export default function OrderPlan() {
                 {/* Fila de autofiltros */}
                 <tr style={styles.filterRow}>
                   <td style={styles.filterCell}>
-                    <input value={fSku} onChange={e => setFSku(e.target.value)} placeholder="Filtrar..." style={styles.filterInput} />
+                    <input value={fSku} onChange={e => setFSku(e.target.value)} placeholder="Filter..." style={styles.filterInput} />
                   </td>
                   <td style={styles.filterCell}>
-                    <input value={fName} onChange={e => setFName(e.target.value)} placeholder="Filtrar..." style={styles.filterInput} />
+                    <input value={fName} onChange={e => setFName(e.target.value)} placeholder="Filter..." style={styles.filterInput} />
                   </td>
                   <td style={styles.filterCell}>
                     <select value={fSupplier} onChange={e => setFSupplier(e.target.value)} style={styles.filterSelect}>
@@ -530,7 +607,7 @@ export default function OrderPlan() {
                   <RowGroup key={g.name} group={g} colSpan={totalColCount} collapsed={collapsed.has(g.name)} onToggle={() => toggleSupplier(g.name)} renderRow={renderRow} />
                 ))}
                 {sorted.length === 0 && (
-                  <tr><td colSpan={totalColCount} style={{ ...styles.td, textAlign: 'center', padding: 30, color: '#888' }}>Sin coincidencias</td></tr>
+                  <tr><td colSpan={totalColCount} style={{ ...styles.td, textAlign: 'center', padding: 30, color: '#888' }}>No matches</td></tr>
                 )}
               </tbody>
             </table>
@@ -540,7 +617,7 @@ export default function OrderPlan() {
 
       {plan.length === 0 && !loading && (
         <div style={styles.empty}>
-          <p>No hay SKUs con demanda proyectada. Verifica ventas, inventario y parámetros, y presiona "Recalcular".</p>
+          <p>No SKUs with projected demand. Check sales, inventory and parameters, then press "Recalculate".</p>
         </div>
       )}
     </div>
@@ -584,6 +661,10 @@ const styles = {
   summaryCard: { background: '#fff', borderRadius: 10, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   summaryVal: { fontSize: 24, fontWeight: 700, color: '#1a1a2e' },
   summaryLabel: { fontSize: 12, color: '#888', marginTop: 2 },
+  monthlyWrap: { marginBottom: 24, background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', overflow: 'hidden' },
+  monthlyHeader: { padding: '12px 16px', fontSize: 15, fontWeight: 700, color: '#1a1a2e', cursor: 'pointer', userSelect: 'none', borderBottom: '1px solid #eee' },
+  monthlyHighlight: { background: '#fff7c2' },
+  monthlyTotalRow: { borderTop: '2px solid #1a1a2e', background: '#eef0f6' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   table: { borderCollapse: 'collapse', background: '#fff', fontSize: 13, whiteSpace: 'nowrap' },
   thead: { background: '#1a1a2e' },

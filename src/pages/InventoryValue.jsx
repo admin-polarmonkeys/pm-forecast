@@ -5,9 +5,9 @@ import { supabase } from '../lib/supabase'
 // Columnas de la tabla (mismas que se exportan a Excel)
 const COLUMNS = [
   { key: 'sku', label: 'SKU', align: 'left' },
-  { key: 'name', label: 'Nombre', align: 'left' },
-  { key: 'supplier', label: 'Proveedor', align: 'left' },
-  { key: 'qty_available_real', label: 'Disponible', align: 'right' },
+  { key: 'name', label: 'Name', align: 'left' },
+  { key: 'supplier', label: 'Supplier', align: 'left' },
+  { key: 'qty_available_real', label: 'Available', align: 'right' },
   { key: 'landed_cost_usd', label: 'Landed Cost', align: 'right' },
   { key: 'total_landed', label: 'Total Landed Cost', align: 'right' },
 ]
@@ -35,7 +35,7 @@ export default function InventoryValue() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [filterSupplier, setFilterSupplier] = useState('Todos')
+  const [filterSupplier, setFilterSupplier] = useState('All')
   const [sortKey, setSortKey] = useState('total_landed')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -91,12 +91,12 @@ export default function InventoryValue() {
   // Proveedores presentes en los datos (más robusto que una lista fija)
   const suppliers = useMemo(() => {
     const set = new Set(rows.map(r => r.supplier).filter(Boolean))
-    return ['Todos', ...[...set].sort()]
+    return ['All', ...[...set].sort()]
   }, [rows])
 
   const filtered = useMemo(() => {
     return rows.filter(r => {
-      if (filterSupplier !== 'Todos' && r.supplier !== filterSupplier) return false
+      if (filterSupplier !== 'All' && r.supplier !== filterSupplier) return false
       if (search) {
         const q = search.toLowerCase()
         if (!r.sku.toLowerCase().includes(q) && !(r.name || '').toLowerCase().includes(q)) return false
@@ -141,9 +141,9 @@ export default function InventoryValue() {
   function exportToExcel() {
     const cols = [
       { header: 'SKU', get: r => r.sku, w: 14 },
-      { header: 'Nombre', get: r => r.name, w: 30 },
-      { header: 'Proveedor', get: r => r.supplier, w: 12 },
-      { header: 'Disponible', get: r => r.qty_available_real, w: 12, z: '#,##0' },
+      { header: 'Name', get: r => r.name, w: 30 },
+      { header: 'Supplier', get: r => r.supplier, w: 12 },
+      { header: 'Available', get: r => r.qty_available_real, w: 12, z: '#,##0' },
       { header: 'Landed Cost', get: r => r.landed_cost_usd, w: 14, z: '"$"#,##0.00' },
       { header: 'Total Landed Cost', get: r => r.total_landed, w: 18, z: '"$"#,##0.00' },
     ]
@@ -219,7 +219,7 @@ export default function InventoryValue() {
     XLSX.writeFile(wb, `PM_Inventory_Value_${today}.xlsx`)
   }
 
-  if (loading) return <div style={styles.loading}>Cargando...</div>
+  if (loading) return <div style={styles.loading}>Loading...</div>
 
   return (
     <div>
@@ -227,13 +227,13 @@ export default function InventoryValue() {
         <div>
           <h1 style={styles.pageTitle}>💰 Inventory Value</h1>
           <p style={styles.pageDesc}>
-            {snapshotDate ? `Inventario al ${snapshotDate}` : 'Sin datos de inventario — sube un snapshot primero'}
+            {snapshotDate ? `Inventory as of ${snapshotDate}` : 'No inventory data — upload a snapshot first'}
           </p>
         </div>
         <div style={styles.headerControls}>
           {sorted.length > 0 && (
             <button style={styles.exportBtn} onClick={exportToExcel}>
-              ⬇ Exportar a Excel
+              ⬇ Export to Excel
             </button>
           )}
         </div>
@@ -250,19 +250,19 @@ export default function InventoryValue() {
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmt(filtered.length)}</div>
-              <div style={styles.summaryLabel}>SKUs con stock</div>
+              <div style={styles.summaryLabel}>SKUs with stock</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{mostValuable ? mostValuable.sku : '—'}</div>
               <div style={styles.summaryLabel}>
-                SKU más valioso{mostValuable ? ` · ${fmtCurrency(mostValuable.total_landed)}` : ''}
+                Most valuable SKU{mostValuable ? ` · ${fmtCurrency(mostValuable.total_landed)}` : ''}
               </div>
             </div>
           </div>
 
           <div style={styles.filters}>
             <input
-              placeholder="Buscar SKU o nombre..."
+              placeholder="Search SKU or name..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={styles.searchInput}
@@ -270,7 +270,7 @@ export default function InventoryValue() {
             <select value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)} style={styles.select}>
               {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <span style={styles.filterTotal}>{fmtCurrency(totalValue)} total filtrado</span>
+            <span style={styles.filterTotal}>{fmtCurrency(totalValue)} filtered total</span>
           </div>
 
           <div style={styles.tableWrap}>
@@ -307,7 +307,7 @@ export default function InventoryValue() {
                 {sorted.length === 0 && (
                   <tr>
                     <td colSpan={COLUMNS.length} style={{ ...styles.td, textAlign: 'center', padding: 30, color: '#888' }}>
-                      Sin coincidencias
+                      No matches
                     </td>
                   </tr>
                 )}
@@ -319,7 +319,7 @@ export default function InventoryValue() {
 
       {rows.length === 0 && !loading && (
         <div style={styles.empty}>
-          <p>No hay componentes con stock disponible en el último snapshot.</p>
+          <p>No components with available stock in the latest snapshot.</p>
         </div>
       )}
     </div>

@@ -76,36 +76,36 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(n)
 }
 
-const NO_SUPPLIER = 'Sin proveedor'
+const NO_SUPPLIER = 'No supplier'
 
 // Pares [label, value] para el panel de detalle del cálculo
 function buildDetailItems(d) {
   return [
     ['Avg Monthly Sales (total)', fmt(d.avgTotal)],
-    ['— Ventas directas', fmt(d.avgDirect)],
-    ['— Derivadas de kits (BOM)', fmt(d.avgDerived)],
+    ['— Direct sales', fmt(d.avgDirect)],
+    ['— Derived from kits (BOM)', fmt(d.avgDerived)],
     ['Growth Factor', d.growth != null ? `× ${fmt(d.growth)}` : '—'],
     ['Projected Monthly Demand (avg × growth)', fmt(d.projected)],
-    ['Lead Time (semanas)', fmt(d.leadWeeks)],
-    ['Coverage Target (meses)', fmt(d.coverage)],
+    ['Lead Time (weeks)', fmt(d.leadWeeks)],
+    ['Coverage Target (months)', fmt(d.coverage)],
     ['MOQ', fmt(d.moq)],
     ['Current Available', fmt(d.available)],
     ['In Transit', fmt(d.transit)],
-    ['Months of Coverage actual', d.monthsCoverage != null ? `${fmt(d.monthsCoverage)} m` : '—'],
-    ['Target Stock necesario (demanda × (cobertura + lead))', fmt(d.targetStock)],
-    ['Current Stock (disponible + tránsito)', fmt(d.currentStock)],
-    ['Raw Order necesaria (target − current)', fmt(d.rawOrder)],
-    ['Orden Sugerida Final (redondeada a MOQ)', fmt(d.finalSuggested)],
+    ['Current Months of Coverage', d.monthsCoverage != null ? `${fmt(d.monthsCoverage)} m` : '—'],
+    ['Target Stock needed (demand × (coverage + lead))', fmt(d.targetStock)],
+    ['Current Stock (available + in transit)', fmt(d.currentStock)],
+    ['Raw Order needed (target − current)', fmt(d.rawOrder)],
+    ['Final Suggested Order (rounded to MOQ)', fmt(d.finalSuggested)],
   ]
 }
 
 // Estados posibles de una orden (value = lo que se guarda en order_status)
 const STATUS_OPTIONS = [
-  { value: '', label: 'Sin estado', color: 'transparent' },
-  { value: 'revision', label: '🟡 En revisión', color: '#fff7c2' },
-  { value: 'negociacion', label: '🟠 En negociación', color: '#ffe0c2' },
-  { value: 'ordenado', label: '🟢 Ordenado', color: '#d5f5e3' },
-  { value: 'bloqueado', label: '🔴 Bloqueado', color: '#ffd5d5' },
+  { value: '', label: 'No status', color: 'transparent' },
+  { value: 'revision', label: '🟡 In Review', color: '#fff7c2' },
+  { value: 'negociacion', label: '🟠 In Negotiation', color: '#ffe0c2' },
+  { value: 'ordenado', label: '🟢 Ordered', color: '#d5f5e3' },
+  { value: 'bloqueado', label: '🔴 Blocked', color: '#ffd5d5' },
 ]
 const statusColor = v => STATUS_OPTIONS.find(s => s.value === (v || ''))?.color || 'transparent'
 const statusLabel = v => (v ? (STATUS_OPTIONS.find(s => s.value === v)?.label || '') : '')
@@ -342,7 +342,7 @@ export default function PurchaseOrders() {
     formatNumberCols(resWs, resAoa.length, [2, 3], MONEY)
     styleRow(resWs, resAoa.length - 1, resHeader.length, XLS_BOLD_STYLE) // fila TOTAL en negrita
     resWs['!cols'] = autoColWidths(resAoa)
-    XLSX.utils.book_append_sheet(wb, resWs, sanitizeSheetName('RESUMEN', used))
+    XLSX.utils.book_append_sheet(wb, resWs, sanitizeSheetName('SUMMARY', used))
 
     // Una hoja por proveedor
     for (const g of expGroups) {
@@ -414,7 +414,7 @@ export default function PurchaseOrders() {
     return { count, totalLanded }
   }, [groups])
 
-  if (loading) return <div style={styles.loading}>Cargando órdenes de compra...</div>
+  if (loading) return <div style={styles.loading}>Loading purchase orders...</div>
 
   // Filtro de proveedores: lista completa (universo) y conteo de SKUs por proveedor en la vista actual
   const allSuppliers = groups.map(g => g.supplier)
@@ -434,8 +434,8 @@ export default function PurchaseOrders() {
           <h1 style={styles.pageTitle}>🛒 Purchase Orders</h1>
           <p style={styles.pageDesc}>
             {runInfo
-              ? `Basado en el forecast del ${runInfo.run_date} (inventario al ${runInfo.snapshot_date})`
-              : 'Órdenes de compra sugeridas, agrupadas por proveedor'}
+              ? `Based on the forecast from ${runInfo.run_date} (inventory as of ${runInfo.snapshot_date})`
+              : 'Suggested purchase orders, grouped by supplier'}
           </p>
         </div>
         <div style={styles.headerBtns}>
@@ -443,16 +443,16 @@ export default function PurchaseOrders() {
             <button
               style={{ ...styles.toggleBtn, ...(view === 'sugerido' ? styles.toggleBtnActive : {}) }}
               onClick={() => setView('sugerido')}
-            >📋 Sugerido</button>
+            >📋 Suggested</button>
             <button
               style={{ ...styles.toggleBtn, ...(view === 'confirmado' ? styles.toggleBtnActive : {}) }}
               onClick={() => setView('confirmado')}
-            >✅ Confirmado</button>
+            >✅ Confirmed</button>
           </div>
           <button style={styles.exportBtn} onClick={exportToExcel} disabled={!visibleGroups.length}>
             ⬇️ Export to Excel
           </button>
-          <button style={styles.runBtn} onClick={loadData}>↻ Re-cargar del último forecast</button>
+          <button style={styles.runBtn} onClick={loadData}>↻ Reload from latest forecast</button>
         </div>
       </div>
 
@@ -460,14 +460,14 @@ export default function PurchaseOrders() {
 
       {noRun ? (
         <div style={styles.empty}>
-          <p>Todavía no se ha corrido ningún forecast.</p>
+          <p>No forecast has been run yet.</p>
           <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-            Andá a "Purchase Forecast" y presioná "Correr Forecast" primero.
+            Go to "Purchase Forecast" and press "Run Forecast" first.
           </p>
         </div>
       ) : groups.length === 0 ? (
         <div style={styles.empty}>
-          <p>El último forecast no generó órdenes sugeridas (ningún SKU con cantidad &gt; 0).</p>
+          <p>The latest forecast did not generate any suggested orders (no SKU with quantity &gt; 0).</p>
         </div>
       ) : (
         <>
@@ -475,15 +475,15 @@ export default function PurchaseOrders() {
           <div style={styles.filterBar}>
             <div style={styles.supplierFilter}>
               <button style={styles.supplierBtn} onClick={() => setSupplierFilterOpen(o => !o)}>
-                Proveedores: {selectedSupplierCount} de {allSuppliers.length} ▾
+                Suppliers: {selectedSupplierCount} of {allSuppliers.length} ▾
               </button>
               {supplierFilterOpen && (
                 <>
                   <div style={styles.backdrop} onClick={() => setSupplierFilterOpen(false)} />
                   <div style={styles.popover}>
                     <div style={styles.popActions}>
-                      <button style={styles.popActionBtn} onClick={selectAllSuppliers}>Seleccionar todos</button>
-                      <button style={styles.popActionBtn} onClick={clearAllSuppliers}>Limpiar</button>
+                      <button style={styles.popActionBtn} onClick={selectAllSuppliers}>Select all</button>
+                      <button style={styles.popActionBtn} onClick={clearAllSuppliers}>Clear</button>
                     </div>
                     <div style={styles.popList}>
                       {allSuppliers.map(s => (
@@ -516,7 +516,7 @@ export default function PurchaseOrders() {
               </div>
             ))}
             <div style={{ ...styles.summaryCard, ...styles.summaryCardTotal }}>
-              <div style={styles.summarySupplier}>TOTAL GENERAL {view === 'confirmado' ? '(Confirmado)' : ''}</div>
+              <div style={styles.summarySupplier}>GRAND TOTAL {view === 'confirmado' ? '(Confirmed)' : ''}</div>
               <div style={styles.summaryRow}>
                 <span style={styles.summaryLabel}>FOB</span>
                 <span style={styles.summaryVal}>{fmtCurrency(grandFob)}</span>
@@ -528,31 +528,31 @@ export default function PurchaseOrders() {
             </div>
             {/* Tarjetas de confirmados (verde) */}
             <div style={{ ...styles.summaryCard, ...styles.summaryCardConfirmed }}>
-              <div style={styles.summarySupplierConfirmed}>ÓRDENES CONFIRMADAS</div>
+              <div style={styles.summarySupplierConfirmed}>CONFIRMED ORDERS</div>
               <div style={styles.confirmedBig}>{confirmedStats.count}</div>
-              <div style={styles.summaryLabel}>SKUs confirmados</div>
+              <div style={styles.summaryLabel}>confirmed SKUs</div>
             </div>
             <div style={{ ...styles.summaryCard, ...styles.summaryCardConfirmed }}>
-              <div style={styles.summarySupplierConfirmed}>TOTAL COMPROMETIDO (LANDED)</div>
+              <div style={styles.summarySupplierConfirmed}>TOTAL COMMITTED (LANDED)</div>
               <div style={styles.confirmedBig}>{fmtCurrency(confirmedStats.totalLanded)}</div>
-              <div style={styles.summaryLabel}>confirmado × landed cost</div>
+              <div style={styles.summaryLabel}>confirmed × landed cost</div>
             </div>
           </div>
 
           {viewGroups.length === 0 && view === 'confirmado' && (
             <div style={styles.empty}>
-              <p>No hay órdenes confirmadas todavía.</p>
+              <p>No confirmed orders yet.</p>
               <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-                En la vista "📋 Sugerido", ingresá la cantidad confirmada por SKU.
+                In the "📋 Suggested" view, enter the confirmed quantity per SKU.
               </p>
             </div>
           )}
 
           {visibleGroups.length === 0 && viewGroups.length > 0 && (
             <div style={styles.empty}>
-              <p>Ningún proveedor seleccionado.</p>
+              <p>No supplier selected.</p>
               <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-                Elegí al menos un proveedor en el filtro de arriba.
+                Select at least one supplier in the filter above.
               </p>
             </div>
           )}
@@ -566,15 +566,15 @@ export default function PurchaseOrders() {
                   <thead>
                     <tr style={styles.thead}>
                       <th style={styles.th}>SKU</th>
-                      <th style={styles.th}>Nombre</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Qty Sugerida</th>
+                      <th style={styles.th}>Name</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Qty Suggested</th>
                       <th style={{ ...styles.th, textAlign: 'center' }}>Confirmed Qty</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>FOB Cost</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>Total FOB</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>Landed Cost</th>
                       <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Estado</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Notas</th>
+                      <th style={{ ...styles.th, textAlign: 'center' }}>Status</th>
+                      <th style={{ ...styles.th, textAlign: 'center' }}>Notes</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -621,7 +621,7 @@ export default function PurchaseOrders() {
                               <button
                                 style={styles.noteBtn}
                                 onClick={() => toggleNotes(r.sku, r.notes)}
-                                title={r.notes || 'Agregar nota'}
+                                title={r.notes || 'Add note'}
                               >
                                 📝
                                 {r.notes ? <span style={styles.noteDot} /> : null}
@@ -649,7 +649,7 @@ export default function PurchaseOrders() {
                                   <input
                                     type="text"
                                     value={noteDrafts[r.sku] ?? ''}
-                                    placeholder="Agregar nota..."
+                                    placeholder="Add note..."
                                     onChange={e => setNoteDrafts(d => ({ ...d, [r.sku]: e.target.value }))}
                                     onKeyDown={e => { if (e.key === 'Enter') saveNote(r) }}
                                     style={styles.notesInput}

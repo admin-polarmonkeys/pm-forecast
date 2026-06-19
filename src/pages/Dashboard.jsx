@@ -130,14 +130,14 @@ export default function Dashboard() {
       .sort((a, b) => a.monthsCoverage - b.monthsCoverage)
   }, [rows, threshold])
 
-  if (loading) return <div style={styles.loading}>Cargando dashboard...</div>
+  if (loading) return <div style={styles.loading}>Loading dashboard...</div>
 
   return (
     <div>
       <div style={styles.header}>
         <div>
           <h1 style={styles.pageTitle}>🏠 Dashboard</h1>
-          <p style={styles.pageDesc}>Cobertura en tiempo real — no requiere correr el forecast</p>
+          <p style={styles.pageDesc}>Real-time coverage — no need to run the forecast</p>
         </div>
       </div>
 
@@ -147,32 +147,32 @@ export default function Dashboard() {
       <div style={styles.section}>
         <div style={styles.alertHeader}>
           <div style={styles.alertTitleRow}>
-            <h2 style={styles.sectionTitle}>⚠️ Alertas de Stockout</h2>
-            <span style={styles.criticalBadge}>{alerts.length} SKUs críticos</span>
+            <h2 style={styles.sectionTitle}>⚠️ Stockout Alerts</h2>
+            <span style={styles.criticalBadge}>{alerts.length} critical SKUs</span>
           </div>
           <div style={styles.thresholdControl}>
-            <label style={styles.thresholdLabel}>Mostrar SKUs con menos de</label>
+            <label style={styles.thresholdLabel}>Show SKUs with less than</label>
             <select value={threshold} onChange={e => setThreshold(+e.target.value)} style={styles.select}>
-              {[1, 2, 3, 4, 5, 6].map(m => <option key={m} value={m}>{m} {m === 1 ? 'mes' : 'meses'}</option>)}
+              {[1, 2, 3, 4, 5, 6].map(m => <option key={m} value={m}>{m} {m === 1 ? 'month' : 'months'}</option>)}
             </select>
           </div>
         </div>
 
         {alerts.length === 0 ? (
-          <div style={styles.allGood}>✅ Todo en orden — ningún SKU por debajo de {threshold} {threshold === 1 ? 'mes' : 'meses'} de cobertura.</div>
+          <div style={styles.allGood}>✅ All good — no SKU below {threshold} {threshold === 1 ? 'month' : 'months'} of coverage.</div>
         ) : (
           <div style={styles.tableWrap}>
             <table style={styles.table}>
               <thead>
                 <tr style={styles.thead}>
                   <th style={styles.th}>SKU</th>
-                  <th style={styles.th}>Nombre</th>
-                  <th style={styles.th}>Proveedor</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Disponible</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Tránsito</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Avg Sales/Mes</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Cobertura</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Días de Inv.</th>
+                  <th style={styles.th}>Name</th>
+                  <th style={styles.th}>Supplier</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Available</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>In Transit</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Avg Sales/Mo</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Coverage</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Days of Inv.</th>
                 </tr>
               </thead>
               <tbody>
@@ -200,47 +200,47 @@ export default function Dashboard() {
 
       {/* 2. INVENTORY SUMMARY CARDS */}
       <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>📦 Resumen de Inventario</h2>
+        <h2 style={styles.sectionTitle}>📦 Inventory Summary</h2>
         <div style={styles.summaryGrid}>
           <div style={styles.summaryCard}>
             <div style={styles.summaryVal}>{summary?.totalTracked ?? 0}</div>
-            <div style={styles.summaryLabel}>SKUs monitoreados</div>
+            <div style={styles.summaryLabel}>Tracked SKUs</div>
           </div>
           <div style={styles.summaryCard}>
             <div style={{ ...styles.summaryVal, color: summary?.zeroStock ? '#c0392b' : '#1a1a2e' }}>{summary?.zeroStock ?? 0}</div>
-            <div style={styles.summaryLabel}>SKUs sin stock</div>
+            <div style={styles.summaryLabel}>SKUs out of stock</div>
           </div>
           <div style={styles.summaryCard}>
             <div style={styles.summaryVal}>{summary?.skusInTransit ?? 0}</div>
-            <div style={styles.summaryLabel}>SKUs en tránsito</div>
+            <div style={styles.summaryLabel}>SKUs in transit</div>
           </div>
           <div style={styles.summaryCard}>
             <div style={{ ...styles.summaryVal, fontSize: 18 }}>{fmtDate(summary?.lastSnapshot)}</div>
-            <div style={styles.summaryLabel}>Último snapshot</div>
+            <div style={styles.summaryLabel}>Latest snapshot</div>
           </div>
         </div>
       </div>
 
       {/* 3. RECENT ACTIVITY */}
       <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>🕑 Actividad Reciente</h2>
+        <h2 style={styles.sectionTitle}>🕑 Recent Activity</h2>
         <div style={styles.activityGrid}>
           <div style={styles.activityCard}>
-            <div style={styles.activityLabel}>Último forecast</div>
+            <div style={styles.activityLabel}>Last forecast</div>
             <div style={styles.activityVal}>{fmtDate(activity?.lastRunDate)}</div>
             <div style={styles.activitySub}>
-              {activity?.lastRunDate ? `${activity.lastRunSkuCount} SKUs ordenados` : 'Sin corridas aún'}
+              {activity?.lastRunDate ? `${activity.lastRunSkuCount} SKUs ordered` : 'No runs yet'}
             </div>
           </div>
           <div style={styles.activityCard}>
-            <div style={styles.activityLabel}>Última carga de ventas</div>
+            <div style={styles.activityLabel}>Last sales upload</div>
             <div style={styles.activityVal}>{fmtDate(activity?.lastSalesUpload)}</div>
-            <div style={styles.activitySub}>desde Report Pundit</div>
+            <div style={styles.activitySub}>from Report Pundit</div>
           </div>
           <div style={styles.activityCard}>
-            <div style={styles.activityLabel}>Última carga de inventario</div>
+            <div style={styles.activityLabel}>Last inventory upload</div>
             <div style={styles.activityVal}>{fmtDate(activity?.lastInventoryUpload)}</div>
-            <div style={styles.activitySub}>snapshot de NetSuite</div>
+            <div style={styles.activitySub}>NetSuite snapshot</div>
           </div>
         </div>
       </div>

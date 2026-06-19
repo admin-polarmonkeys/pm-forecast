@@ -22,7 +22,7 @@ export default function Login() {
         <div style={styles.logo}>
           <span style={styles.logoText}>🐒 PM Forecast</span>
         </div>
-        <h1 style={styles.title}>Iniciar sesión</h1>
+        <h1 style={styles.title}>Sign In</h1>
         <p style={styles.subtitle}>Purchase Forecast System</p>
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.field}>
@@ -37,7 +37,7 @@ export default function Login() {
             />
           </div>
           <div style={styles.field}>
-            <label style={styles.label}>Contraseña</label>
+            <label style={styles.label}>Password</label>
             <input
               type="password"
               value={password}
@@ -49,7 +49,7 @@ export default function Login() {
           </div>
           {error && <div style={styles.error}>{error}</div>}
           <button type="submit" style={styles.button} disabled={loading}>
-            {loading ? 'Entrando...' : 'Entrar'}
+            {loading ? 'Signing In...' : 'Sign In'}
           </button>
         </form>
       </div>

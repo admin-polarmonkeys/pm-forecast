@@ -46,7 +46,7 @@ export default function Layout({ children, activeTab, onTabChange, user }) {
         <div style={styles.userBox}>
           <div style={styles.userEmail}>{user?.email}</div>
           <button style={styles.logoutBtn} onClick={handleLogout} disabled={loggingOut}>
-            {loggingOut ? 'Saliendo...' : 'Cerrar sesión'}
+            {loggingOut ? 'Signing out...' : 'Sign Out'}
           </button>
         </div>
       </aside>

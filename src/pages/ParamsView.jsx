@@ -7,7 +7,7 @@ export default function ParamsView() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [search, setSearch] = useState('')
-  const [filterSupplier, setFilterSupplier] = useState('Todos')
+  const [filterSupplier, setFilterSupplier] = useState('All')
   const [globalGrowth, setGlobalGrowth] = useState('')
   const [globalCoverage, setGlobalCoverage] = useState('')
   const [globalLeadTime, setGlobalLeadTime] = useState('')
@@ -60,34 +60,34 @@ export default function ParamsView() {
     setSaving(false)
   }
 
-  const suppliers = ['Todos', ...new Set(params.map(p => p.supplier).filter(Boolean))]
+  const suppliers = ['All', ...new Set(params.map(p => p.supplier).filter(Boolean))]
 
   const filtered = params.filter(p => {
-    if (filterSupplier !== 'Todos' && p.supplier !== filterSupplier) return false
+    if (filterSupplier !== 'All' && p.supplier !== filterSupplier) return false
     if (search && !p.sku.toLowerCase().includes(search.toLowerCase()) &&
         !p.products?.name?.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
-  if (loading) return <div style={styles.loading}>Cargando parámetros...</div>
+  if (loading) return <div style={styles.loading}>Loading parameters...</div>
 
   return (
     <div>
       <div style={styles.header}>
         <div>
           <h1 style={styles.pageTitle}>⚙️ Parameters</h1>
-          <p style={styles.pageDesc}>Edita los parámetros de compra por SKU. Cambios aplican al próximo forecast.</p>
+          <p style={styles.pageDesc}>Edit purchase parameters by SKU. Changes apply to the next forecast.</p>
         </div>
         <button style={styles.saveBtn} onClick={handleSave} disabled={saving}>
-          {saving ? 'Guardando...' : saved ? '✅ Guardado' : '💾 Guardar Cambios'}
+          {saving ? 'Saving...' : saved ? '✅ Saved' : '💾 Save Changes'}
         </button>
       </div>
 
       <div style={styles.globalCard}>
         <h2 style={styles.globalTitle}>🌐 Global Settings</h2>
         <p style={styles.globalNote}>
-          Aplica un valor a todos los SKUs de una vez. Podés ajustar SKUs individuales después en la tabla.
-          <strong> Presiona Guardar Cambios para confirmar.</strong>
+          Apply a value to all SKUs at once. You can adjust individual SKUs afterward in the table.
+          <strong> Press Save Changes to confirm.</strong>
         </p>
         <div style={styles.globalRow}>
           <div style={styles.globalField}>
@@ -109,7 +109,7 @@ export default function ParamsView() {
           </div>
 
           <div style={styles.globalField}>
-            <label style={styles.globalLabel}>Global Coverage Target (meses)</label>
+            <label style={styles.globalLabel}>Global Coverage Target (months)</label>
             <div style={styles.globalInputGroup}>
               <input
                 type="number"
@@ -127,7 +127,7 @@ export default function ParamsView() {
           </div>
 
           <div style={styles.globalField}>
-            <label style={styles.globalLabel}>Global Lead Time (semanas)</label>
+            <label style={styles.globalLabel}>Global Lead Time (weeks)</label>
             <div style={styles.globalInputGroup}>
               <input
                 type="number"
@@ -148,7 +148,7 @@ export default function ParamsView() {
 
       <div style={styles.filters}>
         <input
-          placeholder="Buscar SKU o nombre..."
+          placeholder="Search SKU or name..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={styles.searchInput}
@@ -164,12 +164,12 @@ export default function ParamsView() {
           <thead>
             <tr style={styles.thead}>
               <th style={styles.th}>SKU</th>
-              <th style={styles.th}>Nombre</th>
-              <th style={{ ...styles.th, textAlign: 'center' }}>Lead Time (sem)</th>
-              <th style={{ ...styles.th, textAlign: 'center' }}>Cobertura (meses)</th>
+              <th style={styles.th}>Name</th>
+              <th style={{ ...styles.th, textAlign: 'center' }}>Lead Time (wk)</th>
+              <th style={{ ...styles.th, textAlign: 'center' }}>Coverage (months)</th>
               <th style={{ ...styles.th, textAlign: 'center' }}>Growth Factor</th>
               <th style={{ ...styles.th, textAlign: 'center' }}>MOQ</th>
-              <th style={styles.th}>Proveedor</th>
+              <th style={styles.th}>Supplier</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>FOB Cost $</th>
               <th style={{ ...styles.th, textAlign: 'right' }}>Landed Cost $</th>
             </tr>

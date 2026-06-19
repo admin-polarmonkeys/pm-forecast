@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 
-const MONTH_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
 // Colores base de la escala
 const RED = '#ffc7ce'     // mínimo de la fila (excluyendo cero)
@@ -102,7 +102,7 @@ export default function SalesHistory() {
     })
   }, [rows, search, onlyWithSales, qtyMap])
 
-  if (loading) return <div style={styles.loading}>Cargando datos...</div>
+  if (loading) return <div style={styles.loading}>Loading...</div>
 
   return (
     <div>
@@ -111,8 +111,8 @@ export default function SalesHistory() {
           <h1 style={styles.pageTitle}>📈 Sales History by SKU</h1>
           <p style={styles.pageDesc}>
             {sales.length > 0
-              ? `${rows.length} SKUs · ${months.length} meses de historial`
-              : 'Sin datos de ventas — sube un archivo primero'}
+              ? `${rows.length} SKUs · ${months.length} months of history`
+              : 'No sales data — upload a file first'}
           </p>
         </div>
       </div>
@@ -121,7 +121,7 @@ export default function SalesHistory() {
 
       <div style={styles.filters}>
         <input
-          placeholder="Buscar SKU o nombre..."
+          placeholder="Search SKU or name..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           style={styles.searchInput}
@@ -132,16 +132,16 @@ export default function SalesHistory() {
             checked={onlyWithSales}
             onChange={e => setOnlyWithSales(e.target.checked)}
           />
-          &nbsp;Solo SKUs con al menos una venta
+          &nbsp;Only SKUs with at least one sale
         </label>
-        <span style={styles.filterTotal}>{filteredRows.length} SKUs visibles</span>
+        <span style={styles.filterTotal}>{filteredRows.length} SKUs visible</span>
       </div>
 
       {months.length === 0 ? (
         <div style={styles.empty}>
-          <p>No hay ventas cargadas todavía.</p>
+          <p>No sales loaded yet.</p>
           <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-            Sube un archivo de ventas desde "Upload Data".
+            Upload a sales file from "Upload Data".
           </p>
         </div>
       ) : (
@@ -150,7 +150,7 @@ export default function SalesHistory() {
             <thead>
               <tr style={styles.thead}>
                 <th style={{ ...styles.th, ...styles.stickyCol, ...styles.stickyHead, textAlign: 'left' }}>SKU</th>
-                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Nombre</th>
+                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Name</th>
                 {months.map(m => (
                   <th key={m.key} style={{ ...styles.th, textAlign: 'right' }}>
                     {MONTH_ABBR[m.month - 1]} {String(m.year).slice(2)}

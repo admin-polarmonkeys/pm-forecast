@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { runForecast } from '../lib/forecast'
 
-const SUPPLIERS = ['Todos', 'SV', 'HAW', 'GUGU', 'HIM', 'TAR', 'DAR', 'WAT', 'WES', 'NING', 'UP', 'ALI', 'SIR', 'SC']
+const SUPPLIERS = ['All', 'SV', 'HAW', 'GUGU', 'HIM', 'TAR', 'DAR', 'WAT', 'WES', 'NING', 'UP', 'ALI', 'SIR', 'SC']
 
 // Filtros de SKU guardados por el usuario en localStorage. Formato: [{ name, skus: [] }]
 const SAVED_FILTERS_KEY = 'pm_forecast_filters'
@@ -28,19 +28,19 @@ function loadSavedFilters() {
 // param: true -> columna de input (header gris) para distinguir de los outputs (header oscuro)
 const COLUMNS = [
   { key: 'sku', label: 'SKU', align: 'left' },
-  { key: 'name', label: 'Nombre', align: 'left' },
-  { key: 'supplier', label: 'Proveedor', align: 'left' },
-  { key: 'avg_monthly_sales_total', label: 'Avg Sales/Mes', align: 'right' },
-  { key: 'projected_monthly_demand', label: 'Proyectado/Mes', align: 'right' },
-  { key: 'qty_available_real', label: 'Disponible', align: 'right' },
-  { key: 'qty_transit', label: 'Tránsito', align: 'right' },
+  { key: 'name', label: 'Name', align: 'left' },
+  { key: 'supplier', label: 'Supplier', align: 'left' },
+  { key: 'avg_monthly_sales_total', label: 'Avg Sales/Mo', align: 'right' },
+  { key: 'projected_monthly_demand', label: 'Projected/Mo', align: 'right' },
+  { key: 'qty_available_real', label: 'Available', align: 'right' },
+  { key: 'qty_transit', label: 'In Transit', align: 'right' },
   { key: 'days_of_inventory', label: 'Days of Inventory', align: 'right' },
   { key: 'growth_factor', label: 'Growth Factor', align: 'right', param: true },
-  { key: 'lead_time_weeks', label: 'Lead Time (sem)', align: 'right', param: true },
+  { key: 'lead_time_weeks', label: 'Lead Time (wk)', align: 'right', param: true },
   { key: 'coverage_target_months', label: 'Coverage Target', align: 'right', param: true },
   { key: 'months_coverage_current', label: 'Months Coverage', align: 'right' },
-  { key: 'qty_suggested', label: 'Orden Sugerida', align: 'right' },
-  { key: 'order_by_days', label: 'Pedir Antes De', align: 'right' },
+  { key: 'qty_suggested', label: 'Suggested Order', align: 'right' },
+  { key: 'order_by_days', label: 'Order By', align: 'right' },
   { key: 'total_landed_cost', label: 'Total Landed', align: 'right' },
 ]
 
@@ -98,7 +98,7 @@ function daysColor(d) {
 }
 
 // Abreviaturas de mes en español para formatear "DD MMM YYYY" (ej. "15 Jul 2026")
-const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatOrderDate(d) {
   const dd = String(d.getDate()).padStart(2, '0')
   return `${dd} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`
@@ -115,13 +115,13 @@ function orderByInfo(r) {
   const cov = r.months_coverage_current
   // Sin cobertura actual: hay que pedir ya
   if (cov == null || cov === 0) {
-    return { text: 'HOY ⚠️', color: '#c00', bold: true, days: 0 }
+    return { text: 'NOW ⚠️', color: '#c00', bold: true, days: 0 }
   }
   const target = r.coverage_target_months || 0
   const lead = r.lead_time_weeks || 0
   const daysUntil = (cov - target) * 30 - lead * 7
   if (daysUntil <= 0) {
-    return { text: 'HOY ⚠️', color: '#c00', bold: true, days: 0 }
+    return { text: 'NOW ⚠️', color: '#c00', bold: true, days: 0 }
   }
   const d = new Date()
   d.setDate(d.getDate() + Math.round(daysUntil))
@@ -139,7 +139,7 @@ export default function ForecastView() {
   const [error, setError] = useState(null)
   const [results, setResults] = useState([])
   const [monthsBack, setMonthsBack] = useState(6)
-  const [filterSupplier, setFilterSupplier] = useState('Todos')
+  const [filterSupplier, setFilterSupplier] = useState('All')
   const [filterOnlyOrders, setFilterOnlyOrders] = useState(false)
   const [search, setSearch] = useState('')
   const [snapshotDate, setSnapshotDate] = useState(null)
@@ -329,7 +329,7 @@ export default function ForecastView() {
   const filtered = useMemo(() => {
     return enriched.filter(r => {
       if (selectedSkus !== null && !selectedSkus.has(r.sku)) return false
-      if (filterSupplier !== 'Todos' && r.supplier !== filterSupplier) return false
+      if (filterSupplier !== 'All' && r.supplier !== filterSupplier) return false
       if (filterOnlyOrders && r.qty_suggested === 0) return false
       if (search && !r.sku.toLowerCase().includes(search.toLowerCase()) &&
           !r.name.toLowerCase().includes(search.toLowerCase())) return false
@@ -386,7 +386,7 @@ export default function ForecastView() {
     // Si ya existe un filtro con ese nombre, lo sobrescribimos en lugar de duplicar
     const withoutDup = savedFilters.filter(f => f.name !== name)
     if (withoutDup.length >= MAX_SAVED_FILTERS) {
-      alert(`Máximo ${MAX_SAVED_FILTERS} filtros guardados. Borrá uno antes de guardar otro.`)
+      alert(`Maximum ${MAX_SAVED_FILTERS} saved filters. Delete one before saving another.`)
       return
     }
     persistSavedFilters([...withoutDup, { name, skus }])
@@ -476,18 +476,18 @@ export default function ForecastView() {
     // Definición de columnas: header + cómo obtener el valor + formato numérico + ancho mínimo
     const cols = [
       { header: 'SKU', get: r => r.sku, w: 14 },
-      { header: 'Nombre', get: r => r.name, w: 30 },
-      { header: 'Proveedor', get: r => r.supplier, w: 12 },
-      { header: 'Avg Sales/Mes', get: r => r.avg_monthly_sales_total, w: 14, z: '0.00' },
-      { header: 'Proyectado/Mes', get: r => r.projected_monthly_demand, w: 15, z: '0.00' },
-      { header: 'Disponible', get: r => r.qty_available_real, w: 12, z: '#,##0' },
-      { header: 'Tránsito', get: r => r.qty_transit, w: 12, z: '#,##0' },
+      { header: 'Name', get: r => r.name, w: 30 },
+      { header: 'Supplier', get: r => r.supplier, w: 12 },
+      { header: 'Avg Sales/Mo', get: r => r.avg_monthly_sales_total, w: 14, z: '0.00' },
+      { header: 'Projected/Mo', get: r => r.projected_monthly_demand, w: 15, z: '0.00' },
+      { header: 'Available', get: r => r.qty_available_real, w: 12, z: '#,##0' },
+      { header: 'In Transit', get: r => r.qty_transit, w: 12, z: '#,##0' },
       { header: 'Days of Inventory', get: r => r.days_of_inventory, w: 16, z: '#,##0' },
       { header: 'Growth Factor', get: r => r.growth_factor, w: 14, z: '0.00' },
-      { header: 'Lead Time (sem)', get: r => r.lead_time_weeks, w: 14, z: '0' },
+      { header: 'Lead Time (wk)', get: r => r.lead_time_weeks, w: 14, z: '0' },
       { header: 'Coverage Target', get: r => r.coverage_target_months, w: 15, z: '0.0' },
       { header: 'Months Coverage', get: r => r.months_coverage_current, w: 15, z: '0.0' },
-      { header: 'Orden Sugerida', get: r => r.qty_suggested, w: 14, z: '#,##0' },
+      { header: 'Suggested Order', get: r => r.qty_suggested, w: 14, z: '#,##0' },
       { header: 'Total Landed', get: r => r.qty_suggested * (landedCostBySku[r.sku] || 0), w: 16, z: '"$"#,##0.00' },
     ]
 
@@ -578,7 +578,7 @@ export default function ForecastView() {
     XLSX.writeFile(wb, `PM_Forecast${filterPart}_${today}.xlsx`)
   }
 
-  if (loading) return <div style={styles.loading}>Cargando datos...</div>
+  if (loading) return <div style={styles.loading}>Loading data...</div>
 
   return (
     <div>
@@ -587,23 +587,23 @@ export default function ForecastView() {
           <h1 style={styles.pageTitle}>📦 Purchase Forecast</h1>
           <p style={styles.pageDesc}>
             {snapshotDate
-              ? `Inventario al ${snapshotDate} · ${data?.salesHistory?.length || 0} registros de ventas`
-              : 'Sin datos de inventario — sube un snapshot primero'}
+              ? `Inventory as of ${snapshotDate} · ${data?.salesHistory?.length || 0} sales records`
+              : 'No inventory data — upload a snapshot first'}
           </p>
         </div>
         <div style={styles.headerControls}>
           <div style={styles.controlGroup}>
-            <label style={styles.controlLabel}>Meses de historial</label>
+            <label style={styles.controlLabel}>Months of history</label>
             <select value={monthsBack} onChange={e => setMonthsBack(+e.target.value)} style={styles.select}>
-              {[3,4,5,6,9,12].map(m => <option key={m} value={m}>{m} meses</option>)}
+              {[3,4,5,6,9,12].map(m => <option key={m} value={m}>{m} months</option>)}
             </select>
           </div>
           <button style={styles.runBtn} onClick={handleRunForecast} disabled={running || !data}>
-            {running ? '⏳ Calculando...' : '▶ Correr Forecast'}
+            {running ? '⏳ Calculating...' : '▶ Run Forecast'}
           </button>
           {results.length > 0 && (
             <button style={styles.exportBtn} onClick={exportToExcel}>
-              ⬇ Exportar a Excel
+              ⬇ Export to Excel
             </button>
           )}
         </div>
@@ -617,7 +617,7 @@ export default function ForecastView() {
           <div style={styles.summaryGrid}>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{results.filter(r => r.qty_suggested > 0).length}</div>
-              <div style={styles.summaryLabel}>SKUs a ordenar</div>
+              <div style={styles.summaryLabel}>SKUs to order</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{fmtCurrency(results.reduce((s, r) => s + (r.total_landed_cost || 0), 0))}</div>
@@ -625,18 +625,18 @@ export default function ForecastView() {
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{results.filter(r => r.months_coverage_current != null && r.months_coverage_current <= 2).length}</div>
-              <div style={styles.summaryLabel}>SKUs críticos (≤2 meses)</div>
+              <div style={styles.summaryLabel}>Critical SKUs (≤2 months)</div>
             </div>
             <div style={styles.summaryCard}>
               <div style={styles.summaryVal}>{results.filter(r => r.months_coverage_current == null || r.months_coverage_current === 0).length}</div>
-              <div style={styles.summaryLabel}>Sin cobertura actual</div>
+              <div style={styles.summaryLabel}>No current coverage</div>
             </div>
           </div>
 
           {/* Filters */}
           <div style={styles.filters}>
             <input
-              placeholder="Buscar SKU o nombre..."
+              placeholder="Search SKU or name..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={styles.searchInput}
@@ -647,8 +647,8 @@ export default function ForecastView() {
             <div style={styles.skuFilter}>
               <button style={styles.skuFilterBtn} onClick={() => setSkuFilterOpen(o => !o)}>
                 {activeFilterName
-                  ? `Filtro: ${activeFilterName} (${selectedCount} SKUs) ▾`
-                  : `${selectedCount} de ${skuOptions.length} SKUs ▾`}
+                  ? `Filter: ${activeFilterName} (${selectedCount} SKUs) ▾`
+                  : `${selectedCount} of ${skuOptions.length} SKUs ▾`}
               </button>
               {skuFilterOpen && (
                 <>
@@ -656,7 +656,7 @@ export default function ForecastView() {
                   <div style={styles.skuPopover}>
                     {savedFilters.length > 0 && (
                       <div style={styles.savedSection}>
-                        <div style={styles.savedTitle}>Filtros guardados</div>
+                        <div style={styles.savedTitle}>Saved Filters</div>
                         <div style={styles.savedChips}>
                           {savedFilters.map(f => (
                             <span
@@ -669,14 +669,14 @@ export default function ForecastView() {
                               <button
                                 style={styles.savedChipLabel}
                                 onClick={() => applySavedFilter(f)}
-                                title={`Aplicar "${f.name}" (${f.skus.length} SKUs)`}
+                                title={`Apply "${f.name}" (${f.skus.length} SKUs)`}
                               >
                                 {f.name}
                               </button>
                               <button
                                 style={styles.savedChipDelete}
                                 onClick={() => deleteSavedFilter(f.name)}
-                                title="Borrar filtro"
+                                title="Delete filter"
                               >
                                 ×
                               </button>
@@ -686,15 +686,15 @@ export default function ForecastView() {
                       </div>
                     )}
                     <input
-                      placeholder="Buscar SKU o nombre..."
+                      placeholder="Search SKU or name..."
                       value={skuSearch}
                       onChange={e => setSkuSearch(e.target.value)}
                       style={styles.skuSearchInput}
                       autoFocus
                     />
                     <div style={styles.skuActions}>
-                      <button style={styles.skuActionBtn} onClick={selectAllSkus}>Seleccionar todo</button>
-                      <button style={styles.skuActionBtn} onClick={clearAllSkus}>Limpiar todo</button>
+                      <button style={styles.skuActionBtn} onClick={selectAllSkus}>Select all</button>
+                      <button style={styles.skuActionBtn} onClick={clearAllSkus}>Clear all</button>
                     </div>
                     <div style={styles.skuList}>
                       {visibleSkuOptions.map(o => (
@@ -709,14 +709,14 @@ export default function ForecastView() {
                         </label>
                       ))}
                       {visibleSkuOptions.length === 0 && (
-                        <div style={styles.skuEmpty}>Sin coincidencias</div>
+                        <div style={styles.skuEmpty}>No matches</div>
                       )}
                     </div>
                     <div style={styles.savedFooter}>
                       {savingFilter ? (
                         <div style={styles.saveRow}>
                           <input
-                            placeholder="Nombre del filtro..."
+                            placeholder="Filter name..."
                             value={newFilterName}
                             onChange={e => setNewFilterName(e.target.value)}
                             onKeyDown={e => {
@@ -731,7 +731,7 @@ export default function ForecastView() {
                             onClick={saveCurrentFilter}
                             disabled={!newFilterName.trim()}
                           >
-                            Guardar
+                            Save
                           </button>
                           <button
                             style={styles.saveCancelBtn}
@@ -746,10 +746,10 @@ export default function ForecastView() {
                           onClick={() => setSavingFilter(true)}
                           disabled={savedFilters.length >= MAX_SAVED_FILTERS}
                           title={savedFilters.length >= MAX_SAVED_FILTERS
-                            ? `Máximo ${MAX_SAVED_FILTERS} filtros guardados`
-                            : 'Guardar la selección actual'}
+                            ? `Maximum ${MAX_SAVED_FILTERS} saved filters`
+                            : 'Save current selection'}
                         >
-                          + Guardar filtro actual
+                          + Save current filter
                           {savedFilters.length >= MAX_SAVED_FILTERS ? ` (${MAX_SAVED_FILTERS}/${MAX_SAVED_FILTERS})` : ''}
                         </button>
                       )}
@@ -764,11 +764,11 @@ export default function ForecastView() {
                 checked={filterOnlyOrders}
                 onChange={e => setFilterOnlyOrders(e.target.checked)}
               />
-              &nbsp;Solo con orden sugerida
+              &nbsp;Only with suggested order
             </label>
-            {filterSupplier !== 'Todos' || filterOnlyOrders || search || selectedSkus !== null ? (
+            {filterSupplier !== 'All' || filterOnlyOrders || search || selectedSkus !== null ? (
               <span style={styles.filterTotal}>
-                {fmtCurrency(totalCost)} total filtrado
+                {fmtCurrency(totalCost)} filtered total
               </span>
             ) : null}
           </div>
@@ -777,7 +777,7 @@ export default function ForecastView() {
           {results.length > 0 && (
             <div style={styles.quickBar}>
               <div style={styles.quickHint}>
-                ⚡ Ajuste rápido — aplica a todos los SKUs sin guardar en Parameters
+                ⚡ Quick adjust — applies to all SKUs without saving to Parameters
               </div>
               <div style={styles.quickControls}>
                 <label style={styles.quickField}>
@@ -793,7 +793,7 @@ export default function ForecastView() {
                   />
                 </label>
                 <label style={styles.quickField}>
-                  <span style={styles.quickLabel}>Lead Time (sem)</span>
+                  <span style={styles.quickLabel}>Lead Time (weeks)</span>
                   <input
                     type="number"
                     min="0"
@@ -803,7 +803,7 @@ export default function ForecastView() {
                   />
                 </label>
                 <label style={styles.quickField}>
-                  <span style={styles.quickLabel}>Coverage Target (meses)</span>
+                  <span style={styles.quickLabel}>Coverage Target (months)</span>
                   <input
                     type="number"
                     min="0"
@@ -813,7 +813,7 @@ export default function ForecastView() {
                   />
                 </label>
                 <button style={styles.quickApplyBtn} onClick={applyQuickAdjust}>
-                  Aplicar a todos y recalcular
+                  Apply to all and recalculate
                 </button>
               </div>
             </div>
@@ -846,8 +846,8 @@ export default function ForecastView() {
                         }}
                         onClick={() => handleSort(col.key)}
                         title={
-                          col.key === 'qty_transit' ? 'Incluye órdenes confirmadas con status Ordenado'
-                          : col.key === 'order_by_days' ? 'Fecha límite para colocar la orden considerando el lead time del proveedor'
+                          col.key === 'qty_transit' ? 'Includes confirmed orders with status Ordered'
+                          : col.key === 'order_by_days' ? 'Deadline to place the order accounting for the supplier lead time'
                           : undefined
                         }
                       >
@@ -914,16 +914,16 @@ export default function ForecastView() {
             </table>
           </div>
           <div style={styles.transitNote}>
-            * Tránsito incluye órdenes confirmadas con status Ordenado (de la última corrida), por eso puede ser mayor a lo registrado en transit_orders.
+            * In Transit includes confirmed orders with status Ordered (from the latest run), so it may exceed what is recorded in transit_orders.
           </div>
         </>
       )}
 
       {results.length === 0 && !loading && (
         <div style={styles.empty}>
-          <p>Presiona "Correr Forecast" para calcular las órdenes sugeridas.</p>
+          <p>Press "Run Forecast" to calculate suggested orders.</p>
           <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-            Asegúrate de haber subido ventas e inventario primero.
+            Make sure you have uploaded sales and inventory first.
           </p>
         </div>
       )}

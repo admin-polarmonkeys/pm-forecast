@@ -63,7 +63,7 @@ export default function ForecastHistory() {
 
   async function deleteRun(run) {
     const ok = window.confirm(
-      `¿Eliminar el forecast del ${run.run_date}? Se borrarán también todas sus órdenes de compra. Esta acción no se puede deshacer.`
+      `Delete the forecast from ${run.run_date}? All of its purchase orders will also be deleted. This action cannot be undone.`
     )
     if (!ok) return
     const { error } = await supabase.from('forecast_runs').delete().eq('id', run.id)
@@ -121,7 +121,7 @@ export default function ForecastHistory() {
     XLSX.writeFile(wb, `PM_Forecast_Run_${run.run_date}.xlsx`)
   }
 
-  if (loading) return <div style={styles.loading}>Cargando historial...</div>
+  if (loading) return <div style={styles.loading}>Loading history...</div>
 
   // ---------- DETALLE ----------
   if (selectedRun) {
@@ -131,23 +131,23 @@ export default function ForecastHistory() {
       <div>
         <div style={styles.header}>
           <div>
-            <h1 style={styles.pageTitle}>📋 Detalle del Forecast</h1>
+            <h1 style={styles.pageTitle}>📋 Forecast Detail</h1>
             <p style={styles.pageDesc}>
-              Corrida del {selectedRun.run_date} · Inventario al {selectedRun.snapshot_date} ·
-              {' '}{selectedRun.months_history} meses de historial
+              Run from {selectedRun.run_date} · Inventory as of {selectedRun.snapshot_date} ·
+              {' '}{selectedRun.months_history} months of history
               {selectedRun.notes ? ` · ${selectedRun.notes}` : ''}
             </p>
           </div>
           <div style={styles.headerBtns}>
             <button style={styles.exportBtn} onClick={() => exportRun(selectedRun)} disabled={!rows.length}>⬇️ Export to Excel</button>
-            <button style={styles.backBtn} onClick={() => setSelectedRun(null)}>← Volver</button>
+            <button style={styles.backBtn} onClick={() => setSelectedRun(null)}>← Back</button>
           </div>
         </div>
 
         {error && <div style={styles.error}>{error}</div>}
 
         <div style={styles.summaryBar}>
-          <span><strong>{rows.length}</strong> SKUs ordenados</span>
+          <span><strong>{rows.length}</strong> SKUs ordered</span>
           <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{fmtCurrency(totalLanded)} total landed</span>
         </div>
 
@@ -156,14 +156,14 @@ export default function ForecastHistory() {
             <thead>
               <tr style={styles.thead}>
                 <th style={styles.th}>SKU</th>
-                <th style={styles.th}>Nombre</th>
-                <th style={styles.th}>Proveedor</th>
+                <th style={styles.th}>Name</th>
+                <th style={styles.th}>Supplier</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Avg Sales</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Proyectado</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Disponible</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Tránsito</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Cobertura</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Qty Sugerida</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Projected</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Available</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>In Transit</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Coverage</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Suggested Qty</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Landed Cost</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
               </tr>
@@ -221,7 +221,7 @@ export default function ForecastHistory() {
         <div>
           <h1 style={styles.pageTitle}>📋 Forecast History</h1>
           <p style={styles.pageDesc}>
-            Corridas pasadas del forecast. Marca dos para comparar.
+            Past forecast runs. Select two to compare.
           </p>
         </div>
       </div>
@@ -230,9 +230,9 @@ export default function ForecastHistory() {
 
       {runs.length === 0 ? (
         <div style={styles.empty}>
-          <p>No hay forecasts guardados todavía.</p>
+          <p>No forecasts saved yet.</p>
           <p style={{ fontSize: 13, color: '#999', marginTop: 8 }}>
-            Corré un forecast desde "Purchase Forecast" para verlo acá.
+            Run a forecast from "Purchase Forecast" to see it here.
           </p>
         </div>
       ) : (
@@ -240,14 +240,14 @@ export default function ForecastHistory() {
           <table style={styles.table}>
             <thead>
               <tr style={styles.thead}>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Comparar</th>
+                <th style={{ ...styles.th, textAlign: 'center' }}>Compare</th>
                 <th style={styles.th}>Run Date</th>
                 <th style={styles.th}>Snapshot</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Meses Hist.</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}># SKUs c/ orden</th>
+                <th style={{ ...styles.th, textAlign: 'center' }}>Months Hist.</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}># SKUs w/ order</th>
                 <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
-                <th style={styles.th}>Notas</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}>Acciones</th>
+                <th style={styles.th}>Notes</th>
+                <th style={{ ...styles.th, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -274,7 +274,7 @@ export default function ForecastHistory() {
                     <td style={{ ...styles.td, textAlign: 'right', fontWeight: 600 }}>{fmtCurrency(totalLanded)}</td>
                     <td style={{ ...styles.td, color: '#666', fontSize: 12 }}>{run.notes || '—'}</td>
                     <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <button style={styles.detailBtn} onClick={() => setSelectedRun(run)}>Ver Detalle</button>
+                      <button style={styles.detailBtn} onClick={() => setSelectedRun(run)}>View Detail</button>
                       <button style={styles.deleteBtn} onClick={() => deleteRun(run)}>🗑</button>
                     </td>
                   </tr>
@@ -289,7 +289,7 @@ export default function ForecastHistory() {
       {comparison && (
         <div style={styles.compareSection}>
           <h2 style={styles.compareTitle}>
-            Comparación: {comparison.runA?.run_date} (Run 1) vs {comparison.runB?.run_date} (Run 2)
+            Comparison: {comparison.runA?.run_date} (Run 1) vs {comparison.runB?.run_date} (Run 2)
           </h2>
 
           <div style={styles.compareSummary}>
@@ -302,7 +302,7 @@ export default function ForecastHistory() {
               <div style={styles.compareCardVal}>{fmtCurrency(comparison.totalB)}</div>
             </div>
             <div style={styles.compareCard}>
-              <div style={styles.compareCardLabel}>Diferencia</div>
+              <div style={styles.compareCardLabel}>Difference</div>
               <div style={{ ...styles.compareCardVal, color: comparison.diffTotal > 0 ? '#c0392b' : comparison.diffTotal < 0 ? '#1a7a4a' : '#1a1a2e' }}>
                 {comparison.diffTotal > 0 ? '+' : ''}{fmtCurrency(comparison.diffTotal)}
               </div>
@@ -314,10 +314,10 @@ export default function ForecastHistory() {
               <thead>
                 <tr style={styles.thead}>
                   <th style={styles.th}>SKU</th>
-                  <th style={styles.th}>Nombre</th>
+                  <th style={styles.th}>Name</th>
                   <th style={{ ...styles.th, textAlign: 'right' }}>Qty Run 1</th>
                   <th style={{ ...styles.th, textAlign: 'right' }}>Qty Run 2</th>
-                  <th style={{ ...styles.th, textAlign: 'right' }}>Diferencia</th>
+                  <th style={{ ...styles.th, textAlign: 'right' }}>Difference</th>
                 </tr>
               </thead>
               <tbody>

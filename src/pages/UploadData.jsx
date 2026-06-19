@@ -31,7 +31,7 @@ export default function UploadData() {
     const sku = transitForm.sku.trim()
     const qty = parseInt(transitForm.qty)
     if (!sku || !qty) {
-      setError('Tránsito: SKU y Qty son obligatorios')
+      setError('In Transit: SKU and Qty are required')
       return
     }
     setTransitSaving(true)
@@ -43,7 +43,7 @@ export default function UploadData() {
       notes: transitForm.notes.trim() || null,
     })
     if (error) {
-      setError(`Tránsito: ${error.message}`)
+      setError(`In Transit: ${error.message}`)
     } else {
       setTransitForm({ sku: '', qty: '', expected_date: '', notes: '' })
       await loadTransitOrders()
@@ -53,7 +53,7 @@ export default function UploadData() {
 
   async function deleteTransitOrder(id) {
     const { error } = await supabase.from('transit_orders').delete().eq('id', id)
-    if (error) setError(`Tránsito: ${error.message}`)
+    if (error) setError(`In Transit: ${error.message}`)
     else await loadTransitOrders()
   }
 
@@ -65,7 +65,7 @@ export default function UploadData() {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1) // quitar BOM
     const parsed = Papa.parse(text, { skipEmptyLines: true })
     const rows = parsed.data
-    if (rows.length < 2) throw new Error('CSV de ventas inválido')
+    if (rows.length < 2) throw new Error('Invalid sales CSV')
 
     const monthNames = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 }
 
@@ -99,7 +99,7 @@ export default function UploadData() {
     // Columna SKU: "SKU" exacto en la fila 1; si no, cualquier celda que contenga "sku"
     let skuColIdx = headerRow.findIndex(h => /^\s*sku\s*$/i.test(String(h || '')))
     if (skuColIdx === -1) skuColIdx = headerRow.findIndex(h => /sku/i.test(String(h || '')))
-    if (skuColIdx === -1) throw new Error('No se encontró columna SKU en el CSV de ventas')
+    if (skuColIdx === -1) throw new Error('No SKU column found in the sales CSV')
 
     // Columnas de mes desde la fila 1 (formato B): "Jan 2026", "Feb 2026", etc.
     const monthCols = []
@@ -123,7 +123,7 @@ export default function UploadData() {
       }
     }
 
-    if (monthCols.length === 0) throw new Error('No se encontraron columnas de meses en el CSV')
+    if (monthCols.length === 0) throw new Error('No month columns found in the CSV')
 
     // Filas de datos. Sumamos cantidades de SKUs duplicados para el mismo mes.
     const skuSales = {}
@@ -211,7 +211,7 @@ export default function UploadData() {
 
   async function handleUpload() {
     if (!salesFile && !inventoryFile && !costFile) {
-      setError('Sube al menos un archivo')
+      setError('Upload at least one file')
       return
     }
     setLoading(true)
@@ -232,7 +232,7 @@ export default function UploadData() {
           const { error } = await supabase
             .from('sales_history')
             .upsert(records, { onConflict: 'sku,year,month' })
-          if (error) throw new Error(`Error ventas: ${error.message}`)
+          if (error) throw new Error(`Sales error: ${error.message}`)
           salesCount = records.length
         }
       }
@@ -266,7 +266,7 @@ export default function UploadData() {
           const { error } = await supabase
             .from('inventory_snapshots')
             .upsert(finalRecords, { onConflict: 'sku,snapshot_date' })
-          if (error) throw new Error(`Error inventario: ${error.message}`)
+          if (error) throw new Error(`Inventory error: ${error.message}`)
           inventoryCount = finalRecords.length
         }
       }
@@ -280,7 +280,7 @@ export default function UploadData() {
           const { data: existing, error: exErr } = await supabase
             .from('purchase_params')
             .select('sku')
-          if (exErr) throw new Error(`Error costos: ${exErr.message}`)
+          if (exErr) throw new Error(`Cost error: ${exErr.message}`)
 
           const existingSkus = new Set((existing || []).map(r => r.sku))
           const toUpsert = records.filter(r => existingSkus.has(r.sku))
@@ -289,7 +289,7 @@ export default function UploadData() {
             const { error } = await supabase
               .from('purchase_params')
               .upsert(toUpsert, { onConflict: 'sku' })
-            if (error) throw new Error(`Error costos: ${error.message}`)
+            if (error) throw new Error(`Cost error: ${error.message}`)
           }
           costCount = toUpsert.length
         }
@@ -322,18 +322,18 @@ export default function UploadData() {
   return (
     <div>
       <h1 style={styles.pageTitle}>⬆️ Upload Data</h1>
-      <p style={styles.pageDesc}>Sube los archivos mensuales para actualizar el forecast</p>
+      <p style={styles.pageDesc}>Upload the monthly files to update the forecast</p>
 
       <div style={styles.grid}>
         {/* Sales CSV */}
         <div style={styles.card}>
-          <h2 style={styles.cardTitle}>📊 Ventas Fulfilled</h2>
-          <p style={styles.cardDesc}>CSV exportado desde Report Pundit (Shopify)</p>
+          <h2 style={styles.cardTitle}>📊 Fulfilled Sales</h2>
+          <p style={styles.cardDesc}>CSV exported from Report Pundit (Shopify)</p>
           <div style={styles.uploadZone} onClick={() => document.getElementById('sales-input').click()}>
             {salesFile ? (
               <span style={styles.fileName}>✅ {salesFile.name}</span>
             ) : (
-              <span style={styles.uploadPrompt}>Click para seleccionar CSV</span>
+              <span style={styles.uploadPrompt}>Click to select CSV</span>
             )}
           </div>
           <input
@@ -347,13 +347,13 @@ export default function UploadData() {
 
         {/* Inventory CSV */}
         <div style={styles.card}>
-          <h2 style={styles.cardTitle}>📦 Inventario NetSuite</h2>
-          <p style={styles.cardDesc}>CSV exportado desde NetSuite (físico + tránsito)</p>
+          <h2 style={styles.cardTitle}>📦 NetSuite Inventory</h2>
+          <p style={styles.cardDesc}>CSV exported from NetSuite (physical + in transit)</p>
           <div style={styles.uploadZone} onClick={() => document.getElementById('inv-input').click()}>
             {inventoryFile ? (
               <span style={styles.fileName}>✅ {inventoryFile.name}</span>
             ) : (
-              <span style={styles.uploadPrompt}>Click para seleccionar CSV</span>
+              <span style={styles.uploadPrompt}>Click to select CSV</span>
             )}
           </div>
           <input
@@ -364,7 +364,7 @@ export default function UploadData() {
             onChange={e => setInventoryFile(e.target.files[0])}
           />
           <div style={styles.dateField}>
-            <label style={styles.label}>Fecha del snapshot</label>
+            <label style={styles.label}>Snapshot date</label>
             <input
               type="date"
               value={snapshotDate}
@@ -379,14 +379,14 @@ export default function UploadData() {
       <div style={{ ...styles.card, marginTop: 24 }}>
         <h2 style={styles.cardTitle}>💰 Cost List</h2>
         <p style={styles.cardDesc}>
-          CSV con columnas "Item", "FOB Cost" y "Landed Average". Actualiza los costos solo de los SKUs
-          que ya existen en Parameters (purchase_params). Filas con ambos costos en $0 o vacío se omiten.
+          CSV with columns "Item", "FOB Cost" and "Landed Average". Updates costs only for SKUs
+          that already exist in Parameters (purchase_params). Rows with both costs at $0 or empty are skipped.
         </p>
         <div style={styles.uploadZone} onClick={() => document.getElementById('cost-input').click()}>
           {costFile ? (
             <span style={styles.fileName}>✅ {costFile.name}</span>
           ) : (
-            <span style={styles.uploadPrompt}>Click para seleccionar CSV</span>
+            <span style={styles.uploadPrompt}>Click to select CSV</span>
           )}
         </div>
         <input
@@ -400,12 +400,12 @@ export default function UploadData() {
 
       {/* Inventario en Tránsito (persistente) */}
       <div style={{ ...styles.card, marginTop: 24 }}>
-        <h2 style={styles.cardTitle}>🚢 Inventario en Tránsito</h2>
+        <h2 style={styles.cardTitle}>🚢 Inventory In Transit</h2>
         <p style={styles.transitNote}>
-          Estas órdenes persisten entre sesiones. Elimínalas manualmente cuando llegue el inventario.
+          These orders persist across sessions. Delete them manually when the inventory arrives.
         </p>
         <p style={styles.cardDesc}>
-          Al procesar el snapshot de inventario, la suma de estas órdenes por SKU se usa como tránsito.
+          When processing the inventory snapshot, the sum of these orders per SKU is used as in-transit quantity.
         </p>
 
         {/* Formulario para agregar */}
@@ -430,13 +430,13 @@ export default function UploadData() {
             style={{ ...styles.input, flex: 1.5 }}
           />
           <input
-            placeholder="Notas (opcional)"
+            placeholder="Notes (optional)"
             value={transitForm.notes}
             onChange={e => setTransitForm({ ...transitForm, notes: e.target.value })}
             style={{ ...styles.input, flex: 2 }}
           />
           <button style={styles.transitAddBtn} onClick={addTransitOrder} disabled={transitSaving}>
-            {transitSaving ? '...' : 'Agregar'}
+            {transitSaving ? '...' : 'Add'}
           </button>
         </div>
 
@@ -447,8 +447,8 @@ export default function UploadData() {
               <tr>
                 <th style={styles.transitTh}>SKU</th>
                 <th style={{ ...styles.transitTh, textAlign: 'right' }}>Qty</th>
-                <th style={styles.transitTh}>Fecha Esperada</th>
-                <th style={styles.transitTh}>Notas</th>
+                <th style={styles.transitTh}>Expected Date</th>
+                <th style={styles.transitTh}>Notes</th>
                 <th style={styles.transitTh}></th>
               </tr>
             </thead>
@@ -467,22 +467,22 @@ export default function UploadData() {
             </tbody>
           </table>
         ) : (
-          <p style={styles.transitEmpty}>No hay órdenes en tránsito registradas.</p>
+          <p style={styles.transitEmpty}>No in-transit orders registered.</p>
         )}
       </div>
 
       {/* Unfulfilled manual */}
       <div style={{ ...styles.card, marginTop: 24 }}>
-        <h2 style={styles.cardTitle}>⚠️ Órdenes Unfulfilled con Stock Físico</h2>
+        <h2 style={styles.cardTitle}>⚠️ Unfulfilled Orders with Physical Stock</h2>
         <p style={styles.cardDesc}>
-          Ingresa manualmente las órdenes pendientes de despacho que ya tienen stock asignado en el warehouse.
-          Estas se descuentan del inventario disponible real.
+          Manually enter the orders pending fulfillment that already have stock allocated in the warehouse.
+          These are deducted from the real available inventory.
         </p>
         <div style={styles.unfulfilledList}>
           {unfulfilled.map((row, idx) => (
             <div key={idx} style={styles.unfulfilledRow}>
               <input
-                placeholder="SKU (ej: PM-CHIL-008-HC)"
+                placeholder="SKU (e.g. PM-CHIL-008-HC)"
                 value={row.sku}
                 onChange={e => updateUnfulfilled(idx, 'sku', e.target.value)}
                 style={{ ...styles.input, flex: 2 }}
@@ -497,20 +497,20 @@ export default function UploadData() {
               <button style={styles.removeBtn} onClick={() => removeUnfulfilled(idx)}>✕</button>
             </div>
           ))}
-          <button style={styles.addBtn} onClick={addUnfulfilled}>+ Agregar SKU</button>
+          <button style={styles.addBtn} onClick={addUnfulfilled}>+ Add SKU</button>
         </div>
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
       {results && (
         <div style={styles.success}>
-          ✅ Upload exitoso — {results.salesCount} registros de ventas, {results.inventoryCount} SKUs de inventario
-          {results.costCount > 0 && `, ${results.costCount} SKUs de costos`} actualizados
+          ✅ Upload successful — {results.salesCount} sales records, {results.inventoryCount} inventory SKUs
+          {results.costCount > 0 && `, ${results.costCount} cost SKUs`} updated
         </div>
       )}
 
       <button style={styles.uploadBtn} onClick={handleUpload} disabled={loading}>
-        {loading ? 'Procesando...' : '⬆️ Procesar y Guardar'}
+        {loading ? 'Processing...' : '⬆️ Process and Save'}
       </button>
     </div>
   )
