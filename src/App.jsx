@@ -16,7 +16,23 @@ import ForecastHistory from './pages/ForecastHistory'
 export default function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('dashboard')
+  // Recupera la última pestaña activa de localStorage para sobrevivir a un refresh
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      return localStorage.getItem('pm_active_tab') || 'dashboard'
+    } catch {
+      return 'dashboard'
+    }
+  })
+
+  // Persiste la pestaña activa ante cada cambio
+  useEffect(() => {
+    try {
+      localStorage.setItem('pm_active_tab', activeTab)
+    } catch {
+      // localStorage no disponible: no es crítico
+    }
+  }, [activeTab])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
