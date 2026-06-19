@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { calcAvgMonthlySales } from '../lib/forecast'
@@ -59,6 +59,16 @@ export default function OrderPlan() {
   const [groupBySupplier, setGroupBySupplier] = useState(false)
   const [collapsed, setCollapsed] = useState(() => new Set())
   const [monthlyOpen, setMonthlyOpen] = useState(true) // Monthly Summary expandido por defecto
+  const [expandedMonths, setExpandedMonths] = useState(() => new Set()) // meses expandidos en el resumen
+
+  function toggleMonth(label) {
+    setExpandedMonths(prev => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
+  }
 
   useEffect(() => { loadData() }, [])
 
@@ -234,19 +244,28 @@ export default function OrderPlan() {
     for (let m = 0; m < applied.planningHorizon; m++) {
       const md = addMonths(now, m)
       const y = md.getFullYear(), mo = md.getMonth()
-      const skus = []
+      const items = []
       let qty = 0, fob = 0, landed = 0
       for (const r of sorted) {
         for (const o of r.orders) {
           if (o.hasOrder && o.date.getFullYear() === y && o.date.getMonth() === mo) {
-            skus.push(r.sku)
+            items.push({
+              sku: r.sku,
+              name: r.name,
+              supplier: r.supplier,
+              qty: o.qty,
+              fobCost: r.fob,
+              totalFob: o.qty * (r.fob || 0),
+              landedCost: r.landed,
+              totalLanded: o.qty * (r.landed || 0),
+            })
             qty += o.qty
             fob += o.qty * (r.fob || 0)
             landed += o.qty * (r.landed || 0)
           }
         }
       }
-      months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: skus.length, qty, fob, landed, skus })
+      months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: items.length, qty, fob, landed, items })
     }
     return months
   }, [sorted, applied.planningHorizon])
@@ -503,18 +522,59 @@ export default function OrderPlan() {
                     </tr>
                   </thead>
                   <tbody>
-                    {monthlySummary.map(m => (
-                      <tr key={m.label} style={{ ...styles.tr, ...(m.landed > 50000 ? styles.monthlyHighlight : {}) }}>
-                        <td style={{ ...styles.td, fontWeight: 600 }}>{m.label}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.count > 0 ? fmt(m.count) : '—'}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.qty > 0 ? fmt(m.qty) : '—'}</td>
-                        <td style={{ ...styles.td, textAlign: 'right' }}>{m.fob > 0 ? fmtCurrency(m.fob) : '—'}</td>
-                        <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{m.landed > 0 ? fmtCurrency(m.landed) : '—'}</td>
-                        <td style={{ ...styles.td, color: '#666', fontSize: 12, whiteSpace: 'normal', maxWidth: 360 }}>
-                          {m.skus.join(', ') || '—'}
-                        </td>
-                      </tr>
-                    ))}
+                    {monthlySummary.map(m => {
+                      const isOpen = expandedMonths.has(m.label)
+                      const canExpand = m.count > 0
+                      return (
+                        <Fragment key={m.label}>
+                          <tr
+                            style={{ ...styles.tr, ...(m.landed > 50000 ? styles.monthlyHighlight : {}), cursor: canExpand ? 'pointer' : 'default' }}
+                            onClick={() => canExpand && toggleMonth(m.label)}
+                          >
+                            <td style={{ ...styles.td, fontWeight: 600 }}>
+                              {canExpand && <span style={{ ...styles.monthCaret, transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>}
+                              {m.label}
+                            </td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{m.count > 0 ? fmt(m.count) : '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{m.qty > 0 ? fmt(m.qty) : '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right' }}>{m.fob > 0 ? fmtCurrency(m.fob) : '—'}</td>
+                            <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{m.landed > 0 ? fmtCurrency(m.landed) : '—'}</td>
+                            <td style={{ ...styles.td, color: '#666', fontSize: 12 }}>
+                              {m.count > 0 ? `${m.count} SKUs` : '—'}
+                            </td>
+                          </tr>
+                          {isOpen && (
+                            <tr>
+                              <td colSpan={6} style={styles.subTableCell}>
+                                <table style={styles.subTable}>
+                                  <thead>
+                                    <tr>
+                                      {['SKU', 'Name', 'Supplier', 'Qty', 'FOB Cost', 'Total FOB', 'Landed Cost', 'Total Landed'].map((h, idx) => (
+                                        <th key={h} style={{ ...styles.subTh, textAlign: idx >= 3 ? 'right' : 'left' }}>{h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {m.items.map(it => (
+                                      <tr key={it.sku} style={styles.subTr}>
+                                        <td style={{ ...styles.subTd, fontFamily: 'monospace', fontSize: 12 }}>{it.sku}</td>
+                                        <td style={styles.subTd}>{it.name}</td>
+                                        <td style={styles.subTd}><span style={styles.supplierBadge}>{it.supplier}</span></td>
+                                        <td style={{ ...styles.subTd, textAlign: 'right', fontWeight: 700 }}>{fmt(it.qty)}</td>
+                                        <td style={{ ...styles.subTd, textAlign: 'right' }}>{fmtCurrency(it.fobCost)}</td>
+                                        <td style={{ ...styles.subTd, textAlign: 'right' }}>{fmtCurrency(it.totalFob)}</td>
+                                        <td style={{ ...styles.subTd, textAlign: 'right' }}>{fmtCurrency(it.landedCost)}</td>
+                                        <td style={{ ...styles.subTd, textAlign: 'right', fontWeight: 700 }}>{fmtCurrency(it.totalLanded)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
                     <tr style={styles.monthlyTotalRow}>
                       <td style={{ ...styles.td, fontWeight: 700 }}>TOTAL</td>
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmt(monthlyTotals.count)}</td>
@@ -665,6 +725,12 @@ const styles = {
   monthlyHeader: { padding: '12px 16px', fontSize: 15, fontWeight: 700, color: '#1a1a2e', cursor: 'pointer', userSelect: 'none', borderBottom: '1px solid #eee' },
   monthlyHighlight: { background: '#fff7c2' },
   monthlyTotalRow: { borderTop: '2px solid #1a1a2e', background: '#eef0f6' },
+  monthCaret: { display: 'inline-block', width: 16, color: '#4455aa', fontSize: 10, transition: 'transform 0.15s' },
+  subTableCell: { padding: '0 0 0 24px', background: '#fafbfd', borderBottom: '1px solid #e6e8ef' },
+  subTable: { borderCollapse: 'collapse', width: '100%', background: '#fafbfd' },
+  subTh: { padding: '7px 12px', color: '#666', fontWeight: 700, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid #e0e3ec', whiteSpace: 'nowrap' },
+  subTr: { borderBottom: '1px solid #eef0f4' },
+  subTd: { padding: '7px 12px', color: '#333', fontSize: 12, whiteSpace: 'nowrap' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   table: { borderCollapse: 'collapse', background: '#fff', fontSize: 13, whiteSpace: 'nowrap' },
   thead: { background: '#1a1a2e' },
