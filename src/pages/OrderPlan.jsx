@@ -119,20 +119,29 @@ export default function OrderPlan() {
       }
 
       // purchase_orders de esa corrida (ya traen demanda, stock, lead time, costos, etc.)
-      // + products solo para mapear el nombre del SKU
-      const [ordersRes, products] = await Promise.all([
+      // + products para el nombre del SKU + transit_orders para el tránsito EN TIEMPO REAL
+      const [ordersRes, products, transit] = await Promise.all([
         supabase.from('purchase_orders').select('*').eq('run_id', run.id),
         supabase.from('products').select('sku, name'),
+        supabase.from('transit_orders').select('sku, qty'),
       ])
       if (ordersRes.error) throw ordersRes.error
       if (products.error) throw products.error
+      if (transit.error) throw transit.error
 
       const nameBySku = {}
       for (const p of (products.data || [])) nameBySku[p.sku] = p.name
 
+      // Tránsito en tiempo real: transit_orders es la fuente de verdad. Si está vacía, se usa como
+      // fallback el qty_transit guardado en la corrida (purchase_orders).
+      const transitBySku = {}
+      for (const t of (transit.data || [])) transitBySku[t.sku] = (transitBySku[t.sku] || 0) + (t.qty || 0)
+
       setData({
         orders: ordersRes.data || [],
         nameBySku,
+        transitBySku,
+        hasTransitData: (transit.data || []).length > 0,
         runDate: run.run_date || run.created_at || null,
         runId: run.id,
       })
@@ -171,7 +180,9 @@ export default function OrderPlan() {
       const fob = po.fob_cost_usd ?? null
       const landed = po.landed_cost_usd ?? null
       const leadWeeks = po.lead_time_weeks && po.lead_time_weeks > 0 ? po.lead_time_weeks : 0
-      const currentStock = (po.qty_available_real || 0) + (po.qty_transit || 0)
+      // Tránsito en vivo desde transit_orders; si la tabla está vacía, fallback al de la corrida
+      const qtyTransit = data.hasTransitData ? (data.transitBySku[po.sku] || 0) : (po.qty_transit || 0)
+      const currentStock = (po.qty_available_real || 0) + qtyTransit
 
       // Simulación de inventario corrido: incluye órdenes previas ya colocadas
       let orderedSoFar = 0

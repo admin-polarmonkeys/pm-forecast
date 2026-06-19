@@ -121,15 +121,17 @@ export function runForecast({ products, bomRows, salesHistory, inventorySnapshot
   const components = products.filter(p => p.type === 'component')
 
   // Tránsito en tiempo real: transit_orders es la fuente de verdad.
-  // Sumamos qty por SKU y sobrescribimos qty_transit del snapshot (que pudo procesarse
-  // antes de registrar el tránsito, o ya tenerlo "horneado"). Sobrescribir evita doble conteo.
+  // Sumamos qty por SKU. Si hay CUALQUIER dato en transit_orders, esa tabla manda por completo:
+  // los SKUs sin entrada quedan en qty_transit = 0 (así un borrado se refleja al instante, sin
+  // re-subir el CSV de inventario). Solo si transit_orders está vacía usamos el snapshot como fallback.
   const transitBySku = {}
   for (const t of transitOrders) {
     transitBySku[t.sku] = (transitBySku[t.sku] || 0) + (t.qty || 0)
   }
+  const hasTransitData = transitOrders.length > 0
 
   const mergedInventory = inventorySnapshot.map(inv =>
-    transitBySku[inv.sku] != null ? { ...inv, qty_transit: transitBySku[inv.sku] } : inv
+    hasTransitData ? { ...inv, qty_transit: transitBySku[inv.sku] || 0 } : inv
   )
 
   // SKUs con tránsito pero sin registro de inventario -> crear uno con físico 0

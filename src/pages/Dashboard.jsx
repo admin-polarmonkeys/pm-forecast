@@ -59,9 +59,15 @@ export default function Dashboard() {
       const availBySku = {}
       for (const r of latestInv) availBySku[r.sku] = r.qty_available_real ?? 0
 
-      // Tránsito sumado por SKU
+      // Tránsito en tiempo real: transit_orders es la fuente de verdad. Si la tabla está vacía,
+      // usamos como fallback el qty_transit del snapshot. Con datos en transit_orders, esa tabla
+      // manda: un SKU sin entrada queda en 0 (los borrados se reflejan al instante).
       const transitBySku = {}
       for (const t of transit.data || []) transitBySku[t.sku] = (transitBySku[t.sku] || 0) + (t.qty || 0)
+      const hasTransitData = (transit.data || []).length > 0
+      const snapshotTransitBySku = {}
+      for (const r of latestInv) snapshotTransitBySku[r.sku] = r.qty_transit ?? 0
+      const effTransit = sku => (hasTransitData ? (transitBySku[sku] || 0) : (snapshotTransitBySku[sku] || 0))
 
       // Universo de SKUs: componentes que tienen inventario, ventas o tránsito (kits excluidos)
       const universe = new Set([
@@ -73,7 +79,7 @@ export default function Dashboard() {
       const computed = [...universe].map(sku => {
         const avg = calcAvgMonthlySales(salesData, sku, 6) // solo ventas directas, últimos 6 meses
         const available = availBySku[sku] || 0
-        const qtyTransit = transitBySku[sku] || 0
+        const qtyTransit = effTransit(sku)
         const monthsCoverage = avg > 0 ? (available + qtyTransit) / avg : null
         const daysInventory = monthsCoverage != null ? monthsCoverage * 30 : null
         return {
@@ -90,7 +96,7 @@ export default function Dashboard() {
 
       // Resumen
       const zeroStock = computed.filter(r => r.available === 0).length
-      const skusInTransit = Object.keys(transitBySku).filter(s => transitBySku[s] > 0).length
+      const skusInTransit = computed.filter(r => r.qtyTransit > 0).length
 
       // Actividad reciente
       const lastRun = runs.data?.[0] || null
