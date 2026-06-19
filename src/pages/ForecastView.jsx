@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { runForecast } from '../lib/forecast'
 
@@ -428,6 +429,114 @@ export default function ForecastView() {
     return m
   }, [data])
 
+  // Exporta las filas actualmente visibles (sorted = filtered + orden) a un .xlsx con SheetJS.
+  // Respeta filtros de SKU/proveedor/"solo con orden" porque parte de `sorted`.
+  function exportToExcel() {
+    // Definición de columnas: header + cómo obtener el valor + formato numérico + ancho mínimo
+    const cols = [
+      { header: 'SKU', get: r => r.sku, w: 14 },
+      { header: 'Nombre', get: r => r.name, w: 30 },
+      { header: 'Proveedor', get: r => r.supplier, w: 12 },
+      { header: 'Avg Sales/Mes', get: r => r.avg_monthly_sales_total, w: 14, z: '0.00' },
+      { header: 'Proyectado/Mes', get: r => r.projected_monthly_demand, w: 15, z: '0.00' },
+      { header: 'Disponible', get: r => r.qty_available_real, w: 12, z: '#,##0' },
+      { header: 'Tránsito', get: r => r.qty_transit, w: 12, z: '#,##0' },
+      { header: 'Days of Inventory', get: r => r.days_of_inventory, w: 16, z: '#,##0' },
+      { header: 'Growth Factor', get: r => r.growth_factor, w: 14, z: '0.00' },
+      { header: 'Lead Time (sem)', get: r => r.lead_time_weeks, w: 14, z: '0' },
+      { header: 'Coverage Target', get: r => r.coverage_target_months, w: 15, z: '0.0' },
+      { header: 'Months Coverage', get: r => r.months_coverage_current, w: 15, z: '0.0' },
+      { header: 'Orden Sugerida', get: r => r.qty_suggested, w: 14, z: '#,##0' },
+      { header: 'Total Landed', get: r => r.qty_suggested * (landedCostBySku[r.sku] || 0), w: 16, z: '"$"#,##0.00' },
+    ]
+
+    const headerStyle = {
+      fill: { fgColor: { rgb: '1F3864' } },
+      font: { color: { rgb: 'FFFFFF' }, bold: true },
+      alignment: { horizontal: 'center', vertical: 'center' },
+    }
+
+    // Totales para la fila resumen
+    const totalQty = sorted.reduce((s, r) => s + (r.qty_suggested || 0), 0)
+    const totalLanded = sorted.reduce((s, r) => s + (r.qty_suggested * (landedCostBySku[r.sku] || 0)), 0)
+
+    // Matriz de valores: encabezados + filas + resumen
+    const aoa = [
+      cols.map(c => c.header),
+      ...sorted.map(r => cols.map(c => {
+        const v = c.get(r)
+        return v == null ? '' : v
+      })),
+    ]
+    // Fila resumen: total SKUs, suma de Orden Sugerida y de Total Landed alineadas a sus columnas
+    const summary = cols.map(() => '')
+    summary[0] = 'TOTAL'
+    summary[1] = `${sorted.length} SKUs`
+    summary[12] = totalQty
+    summary[13] = totalLanded
+    aoa.push(summary)
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    const headerRow = 0
+    const summaryRow = aoa.length - 1
+
+    const summaryStyle = {
+      font: { bold: true },
+      fill: { fgColor: { rgb: 'E7ECF5' } },
+      border: { top: { style: 'thin', color: { rgb: '1F3864' } } },
+    }
+
+    // Aplica estilos y formatos celda por celda
+    for (let c = 0; c < cols.length; c++) {
+      // Header
+      const hAddr = XLSX.utils.encode_cell({ r: headerRow, c })
+      if (ws[hAddr]) ws[hAddr].s = headerStyle
+
+      // Filas de datos: formato numérico + alineación a la derecha en columnas numéricas
+      for (let i = 0; i < sorted.length; i++) {
+        const addr = XLSX.utils.encode_cell({ r: i + 1, c })
+        const cell = ws[addr]
+        if (!cell) continue
+        if (cols[c].z && typeof cell.v === 'number') {
+          cell.z = cols[c].z
+          cell.s = { alignment: { horizontal: 'right' } }
+        }
+      }
+
+      // Fila resumen
+      const sAddr = XLSX.utils.encode_cell({ r: summaryRow, c })
+      if (ws[sAddr]) {
+        ws[sAddr].s = { ...summaryStyle }
+        if (cols[c].z && typeof ws[sAddr].v === 'number') {
+          ws[sAddr].z = cols[c].z
+          ws[sAddr].s = { ...summaryStyle, alignment: { horizontal: 'right' } }
+        }
+      }
+    }
+
+    // Auto-ancho: tomamos el largo máximo entre header, valores y resumen por columna
+    ws['!cols'] = cols.map((col, c) => {
+      let maxLen = col.header.length
+      for (let r = 1; r < aoa.length; r++) {
+        const v = aoa[r][c]
+        const len = v == null ? 0 : String(v).length
+        if (len > maxLen) maxLen = len
+      }
+      // +2 de padding, con un piso (col.w) y techo razonable para no desbordar
+      return { wch: Math.min(Math.max(maxLen + 2, col.w), 40) }
+    })
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Purchase Forecast')
+
+    // Nombre de archivo: PM_Forecast[_Filtro]_YYYY-MM-DD.xlsx
+    const today = new Date().toISOString().split('T')[0]
+    const filterPart = activeFilterName
+      ? '_' + activeFilterName.trim().replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+      : ''
+    XLSX.writeFile(wb, `PM_Forecast${filterPart}_${today}.xlsx`)
+  }
+
   if (loading) return <div style={styles.loading}>Cargando datos...</div>
 
   return (
@@ -451,6 +560,11 @@ export default function ForecastView() {
           <button style={styles.runBtn} onClick={handleRunForecast} disabled={running || !data}>
             {running ? '⏳ Calculando...' : '▶ Correr Forecast'}
           </button>
+          {results.length > 0 && (
+            <button style={styles.exportBtn} onClick={exportToExcel}>
+              ⬇ Exportar a Excel
+            </button>
+          )}
         </div>
       </div>
 
@@ -778,6 +892,7 @@ const styles = {
   controlLabel: { fontSize: 11, color: '#888', fontWeight: 600 },
   select: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, background: '#fff' },
   runBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  exportBtn: { background: '#1F3864', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20 },
   summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
   summaryCard: { background: '#fff', borderRadius: 10, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
