@@ -169,6 +169,8 @@ export default function OrderPlan() {
       const moq = params.moq && params.moq > 0 ? params.moq : 1
       const fob = params.fob_cost_usd ?? null
       const landed = params.landed_cost_usd ?? null
+      // Lead time del proveedor (semanas). Null o 0 -> 0.
+      const leadWeeks = params.lead_time_weeks && params.lead_time_weeks > 0 ? params.lead_time_weeks : 0
       const currentStock = (invBySku[prod.sku]?.qty_available_real || 0) + (transitBySku[prod.sku] || 0)
 
       // Simulación de inventario corrido: incluye órdenes previas ya colocadas
@@ -182,9 +184,13 @@ export default function OrderPlan() {
           qty = Math.max(moq, Math.ceil(need / moq) * moq)
           orderedSoFar += qty
         }
-        const date = slotDates[i]
+        // El slot marca cuándo el inventario toca el mínimo; la orden se coloca antes,
+        // descontando el lead time (date = fecha de colocación de la orden).
+        const date = new Date(slotDates[i].getTime())
+        date.setDate(date.getDate() - leadWeeks * 7)
         const days = Math.round((date - now) / 86400000)
-        orders.push({ qty, date, days, hasOrder: qty > 0 })
+        const overdue = days < 0
+        orders.push({ qty, date, days, hasOrder: qty > 0, overdue })
       }
 
       const totalQty = orders.reduce((s, o) => s + o.qty, 0)
@@ -192,6 +198,7 @@ export default function OrderPlan() {
         sku: prod.sku,
         name: prod.name,
         supplier: params.supplier || '—',
+        leadWeeks,
         fob, landed,
         orders,
         totalQty,
@@ -338,7 +345,10 @@ export default function OrderPlan() {
       let qty = 0, fob = 0, landed = 0
       for (const r of sorted) {
         for (const o of r.orders) {
-          if (o.hasOrder && o.date.getFullYear() === y && o.date.getMonth() === mo) {
+          // Agrupamos por mes de la fecha de COLOCACIÓN (o.date). Las vencidas (placeDate en el
+          // pasado) se asignan al mes actual: hay que colocarlas ya.
+          const eff = o.overdue ? now : o.date
+          if (o.hasOrder && eff.getFullYear() === y && eff.getMonth() === mo) {
             items.push({
               sku: r.sku,
               name: r.name,
@@ -390,6 +400,7 @@ export default function OrderPlan() {
       { key: 'sku', label: 'SKU' },
       { key: 'name', label: 'Name' },
       { key: 'supplier', label: 'Supplier' },
+      { key: 'leadWeeks', label: 'Lead Time (wk)', num: true },
     ]
     for (let i = 0; i < numOrders; i++) {
       cols.push({ key: `order_${i}_date`, label: `Order ${i + 1} Date`, num: true })
@@ -514,9 +525,10 @@ export default function OrderPlan() {
       <td style={{ ...styles.td, fontFamily: 'monospace', fontSize: 12 }}>{r.sku}</td>
       <td style={styles.td}>{r.name}</td>
       <td style={styles.td}><span style={styles.supplierBadge}>{r.supplier}</span></td>
+      <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.leadWeeks)}</td>
       {r.orders.map((o, i) => [
-        <td key={`d${i}`} style={{ ...styles.td, textAlign: 'center', color: o.hasOrder ? dateColor(o.days) : '#bbb', fontWeight: o.hasOrder && o.days <= 30 ? 700 : 400 }}>
-          {o.hasOrder ? formatDate(o.date) : '—'}
+        <td key={`d${i}`} style={{ ...styles.td, textAlign: 'center', color: !o.hasOrder ? '#bbb' : o.overdue ? '#c00' : dateColor(o.days), fontWeight: o.hasOrder && (o.overdue || o.days <= 30) ? 700 : 400 }}>
+          {!o.hasOrder ? '—' : o.overdue ? 'OVERDUE ⚠️' : formatDate(o.date)}
         </td>,
         <td key={`q${i}`} style={{ ...styles.td, textAlign: 'right', fontWeight: o.hasOrder ? 700 : 400 }}>
           {o.hasOrder ? fmt(o.qty) : '—'}
@@ -818,6 +830,7 @@ export default function OrderPlan() {
                       {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </td>
+                  <td style={styles.filterCell} />{/* Lead Time: sin filtro */}
                   {/* Columnas de orden: sin filtro */}
                   {Array.from({ length: numOrders }).map((_, i) => [
                     <td key={`fd${i}`} style={styles.filterCell} />,
