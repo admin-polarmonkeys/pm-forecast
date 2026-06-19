@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
-import { calcAvgMonthlySales } from '../lib/forecast'
 
 const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -52,7 +51,7 @@ function loadSavedFilters() {
   }
 }
 
-const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12, growthFactor: 1.4, leadTimeOverride: '' }
+const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12 }
 
 export default function OrderPlan() {
   const [data, setData] = useState(null)
@@ -103,27 +102,39 @@ export default function OrderPlan() {
   async function loadData() {
     setLoading(true)
     try {
-      const [products, sales, inventory, params, transit] = await Promise.all([
-        supabase.from('products').select('*'),
-        supabase.from('sales_history').select('*'),
-        supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
-        supabase.from('purchase_params').select('*'),
-        supabase.from('transit_orders').select('sku, qty'),
-      ])
-      for (const res of [products, sales, inventory, params, transit]) {
-        if (res.error) throw res.error
+      // Última corrida del forecast
+      const runRes = await supabase
+        .from('forecast_runs')
+        .select('id, run_date, created_at')
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (runRes.error) throw runRes.error
+      const run = runRes.data?.[0] || null
+
+      if (!run) {
+        // Sin corridas todavía: el plan se construye sobre el forecast, así que no hay nada que mostrar
+        setData({ orders: [], nameBySku: {}, runDate: null, runId: null })
+        setLoading(false)
+        return
       }
 
-      const latestDate = inventory.data?.[0]?.snapshot_date || null
-      const latestInv = latestDate ? inventory.data.filter(r => r.snapshot_date === latestDate) : []
+      // purchase_orders de esa corrida (ya traen demanda, stock, lead time, costos, etc.)
+      // + products solo para mapear el nombre del SKU
+      const [ordersRes, products] = await Promise.all([
+        supabase.from('purchase_orders').select('*').eq('run_id', run.id),
+        supabase.from('products').select('sku, name'),
+      ])
+      if (ordersRes.error) throw ordersRes.error
+      if (products.error) throw products.error
+
+      const nameBySku = {}
+      for (const p of (products.data || [])) nameBySku[p.sku] = p.name
 
       setData({
-        products: products.data || [],
-        salesHistory: sales.data || [],
-        inventory: latestInv,
-        purchaseParams: params.data || [],
-        transitOrders: transit.data || [],
-        snapshotDate: latestDate,
+        orders: ordersRes.data || [],
+        nameBySku,
+        runDate: run.run_date || run.created_at || null,
+        runId: run.id,
       })
     } catch (err) {
       setError(err.message)
@@ -143,41 +154,24 @@ export default function OrderPlan() {
     return Array.from({ length: numOrders }, (_, i) => addMonths(now, i * applied.orderFrequency))
   }, [numOrders, applied.orderFrequency])
 
-  // Plan de compras por SKU
+  // Plan de compras por SKU, construido sobre los purchase_orders de la última corrida.
+  // No recalculamos demanda/stock/lead time: se toman directo del forecast guardado.
   const plan = useMemo(() => {
     if (!data) return []
-    const { coverageTarget, orderFrequency, growthFactor, leadTimeOverride } = applied
-    // Override global de lead time: si tiene valor numérico, pisa el lead time de cada SKU
-    const globalLead = leadTimeOverride !== '' && leadTimeOverride != null && !Number.isNaN(Number(leadTimeOverride))
-      ? Number(leadTimeOverride)
-      : null
-
-    const invBySku = {}
-    for (const i of data.inventory) invBySku[i.sku] = i
-    const paramsBySku = {}
-    for (const p of data.purchaseParams) paramsBySku[p.sku] = p
-    const transitBySku = {}
-    for (const t of data.transitOrders) transitBySku[t.sku] = (transitBySku[t.sku] || 0) + (t.qty || 0)
-
+    const { coverageTarget, orderFrequency } = applied
     const now = new Date()
     const rows = []
 
-    for (const prod of data.products) {
-      if (prod.type !== 'component') continue
-      const params = paramsBySku[prod.sku] || {}
-
-      const avgDemand = calcAvgMonthlySales(data.salesHistory, prod.sku, 6)
-      const projected = avgDemand * growthFactor
+    for (const po of data.orders) {
+      // Valores que vienen del forecast guardado (no se recalculan)
+      const projected = po.projected_monthly_demand
       if (!projected || projected <= 0) continue // Skip SKUs sin demanda proyectada
 
-      const moq = params.moq && params.moq > 0 ? params.moq : 1
-      const fob = params.fob_cost_usd ?? null
-      const landed = params.landed_cost_usd ?? null
-      // Lead time: override global si está seteado; si no, el del proveedor (null o 0 -> 0)
-      const leadWeeks = globalLead != null
-        ? globalLead
-        : (params.lead_time_weeks && params.lead_time_weeks > 0 ? params.lead_time_weeks : 0)
-      const currentStock = (invBySku[prod.sku]?.qty_available_real || 0) + (transitBySku[prod.sku] || 0)
+      const moq = po.moq && po.moq > 0 ? po.moq : 1
+      const fob = po.fob_cost_usd ?? null
+      const landed = po.landed_cost_usd ?? null
+      const leadWeeks = po.lead_time_weeks && po.lead_time_weeks > 0 ? po.lead_time_weeks : 0
+      const currentStock = (po.qty_available_real || 0) + (po.qty_transit || 0)
 
       // Simulación de inventario corrido: incluye órdenes previas ya colocadas
       let orderedSoFar = 0
@@ -201,9 +195,9 @@ export default function OrderPlan() {
 
       const totalQty = orders.reduce((s, o) => s + o.qty, 0)
       rows.push({
-        sku: prod.sku,
-        name: prod.name,
-        supplier: params.supplier || '—',
+        sku: po.sku,
+        name: data.nameBySku[po.sku] || po.sku,
+        supplier: po.supplier || '—',
         leadWeeks,
         fob, landed,
         orders,
@@ -571,7 +565,9 @@ export default function OrderPlan() {
         <div>
           <h1 style={styles.pageTitle}>📅 Order Plan</h1>
           <p style={styles.pageDesc}>
-            {data?.snapshotDate ? `Inventory as of ${data.snapshotDate}` : 'No inventory data'}
+            {data?.runDate
+              ? `Based on forecast run from ${String(data.runDate).slice(0, 10)}`
+              : 'No forecast run available'}
             {' · '}{applied.planningHorizon}-month plan, order every {applied.orderFrequency}
           </p>
         </div>
@@ -596,8 +592,6 @@ export default function OrderPlan() {
           { key: 'coverageTarget', label: 'Coverage Target (months)', step: 1 },
           { key: 'orderFrequency', label: 'Order Frequency (months)', step: 1 },
           { key: 'planningHorizon', label: 'Planning Horizon (months)', step: 1 },
-          { key: 'growthFactor', label: 'Growth Factor', step: 0.05 },
-          { key: 'leadTimeOverride', label: 'Lead Time (weeks)', step: 1, placeholder: '—', note: 'Leave blank to use individual SKU lead times' },
         ].map(f => (
           <label key={f.key} style={styles.paramField}>
             <span style={styles.paramLabel}>{f.label}</span>
@@ -881,7 +875,9 @@ export default function OrderPlan() {
 
       {plan.length === 0 && !loading && (
         <div style={styles.empty}>
-          <p>No SKUs with projected demand. Check sales, inventory and parameters, then press "Recalculate".</p>
+          {data && !data.runDate
+            ? <p>Run the Purchase Forecast first to generate the Order Plan.</p>
+            : <p>No SKUs with projected demand in the latest forecast run.</p>}
         </div>
       )}
     </div>
