@@ -352,7 +352,10 @@ export default function OrderPlan() {
     for (let m = 0; m < applied.planningHorizon; m++) {
       const md = addMonths(now, m)
       const y = md.getFullYear(), mo = md.getMonth()
-      const items = []
+      // Agregamos por SKU dentro del mes: un SKU con varias órdenes que caen en el mismo mes
+      // (p. ej. varios slots vencidos clampeados al mes actual) debe aparecer UNA sola vez,
+      // con las cantidades sumadas. Si no, el SKU se duplica en la vista expandida.
+      const bySku = new Map()
       let qty = 0, fob = 0, landed = 0
       for (const r of sorted) {
         for (const o of r.orders) {
@@ -360,22 +363,32 @@ export default function OrderPlan() {
           // pasado) se asignan al mes actual: hay que colocarlas ya.
           const eff = o.overdue ? now : o.date
           if (o.hasOrder && eff.getFullYear() === y && eff.getMonth() === mo) {
-            items.push({
-              sku: r.sku,
-              name: r.name,
-              supplier: r.supplier,
-              qty: o.qty,
-              fobCost: r.fob,
-              totalFob: o.qty * (r.fob || 0),
-              landedCost: r.landed,
-              totalLanded: o.qty * (r.landed || 0),
-            })
+            const oFob = o.qty * (r.fob || 0)
+            const oLanded = o.qty * (r.landed || 0)
+            const existing = bySku.get(r.sku)
+            if (existing) {
+              existing.qty += o.qty
+              existing.totalFob += oFob
+              existing.totalLanded += oLanded
+            } else {
+              bySku.set(r.sku, {
+                sku: r.sku,
+                name: r.name,
+                supplier: r.supplier,
+                qty: o.qty,
+                fobCost: r.fob,
+                totalFob: oFob,
+                landedCost: r.landed,
+                totalLanded: oLanded,
+              })
+            }
             qty += o.qty
-            fob += o.qty * (r.fob || 0)
-            landed += o.qty * (r.landed || 0)
+            fob += oFob
+            landed += oLanded
           }
         }
       }
+      const items = [...bySku.values()]
       months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: items.length, qty, fob, landed, items })
     }
     return months
