@@ -34,6 +34,24 @@ function addMonths(base, months) {
   return d
 }
 
+// Filtros de SKU guardados por el usuario en localStorage. Formato: [{ name, skus: [] }]
+const SAVED_FILTERS_KEY = 'pm_orderplan_filters'
+const MAX_SAVED_FILTERS = 10
+
+function loadSavedFilters() {
+  try {
+    const raw = localStorage.getItem(SAVED_FILTERS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter(f => f && typeof f.name === 'string' && Array.isArray(f.skus))
+      .slice(0, MAX_SAVED_FILTERS)
+  } catch {
+    return []
+  }
+}
+
 const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12, growthFactor: 1.4 }
 
 export default function OrderPlan() {
@@ -52,6 +70,16 @@ export default function OrderPlan() {
   const [fQty, setFQty] = useState({ min: '', max: '' })
   const [fFob, setFFob] = useState({ min: '', max: '' })
   const [fLanded, setFLanded] = useState({ min: '', max: '' })
+
+  // Filtro multi-select de SKU (mismo patrón que ForecastView)
+  // selectedSkus === null = "todos seleccionados" (sin filtro); un Set = selección explícita
+  const [selectedSkus, setSelectedSkus] = useState(null)
+  const [skuFilterOpen, setSkuFilterOpen] = useState(false)
+  const [skuSearch, setSkuSearch] = useState('')
+  const [savedFilters, setSavedFilters] = useState(loadSavedFilters)
+  const [activeFilterName, setActiveFilterName] = useState(null)
+  const [savingFilter, setSavingFilter] = useState(false)
+  const [newFilterName, setNewFilterName] = useState('')
 
   const [sortKey, setSortKey] = useState('totalLanded')
   const [sortDir, setSortDir] = useState('desc')
@@ -187,6 +215,7 @@ export default function OrderPlan() {
       return true
     }
     return plan.filter(r => {
+      if (selectedSkus !== null && !selectedSkus.has(r.sku)) return false
       if (fSku && !r.sku.toLowerCase().includes(fSku.toLowerCase())) return false
       if (fName && !(r.name || '').toLowerCase().includes(fName.toLowerCase())) return false
       if (fSupplier !== 'All' && r.supplier !== fSupplier) return false
@@ -195,7 +224,68 @@ export default function OrderPlan() {
       if (!inRange(r.totalLanded, fLanded)) return false
       return true
     })
-  }, [plan, fSku, fName, fSupplier, fQty, fFob, fLanded])
+  }, [plan, selectedSkus, fSku, fName, fSupplier, fQty, fFob, fLanded])
+
+  // Opciones del multi-select de SKU (ordenadas A–Z) y derivados
+  const skuOptions = useMemo(
+    () => plan.map(r => ({ sku: r.sku, name: r.name })).sort((a, b) => a.sku.localeCompare(b.sku)),
+    [plan]
+  )
+  const visibleSkuOptions = useMemo(() => {
+    const q = skuSearch.trim().toLowerCase()
+    if (!q) return skuOptions
+    return skuOptions.filter(o => o.sku.toLowerCase().includes(q) || (o.name || '').toLowerCase().includes(q))
+  }, [skuOptions, skuSearch])
+
+  const selectedCount = selectedSkus === null ? skuOptions.length : selectedSkus.size
+  const isSkuSelected = sku => selectedSkus === null || selectedSkus.has(sku)
+
+  function toggleSku(sku) {
+    setActiveFilterName(null) // edición manual: deja de coincidir con el filtro guardado
+    setSelectedSkus(prev => {
+      const next = prev === null ? new Set(skuOptions.map(o => o.sku)) : new Set(prev)
+      if (next.has(sku)) next.delete(sku)
+      else next.add(sku)
+      return next
+    })
+  }
+  function selectAllSkus() { setSelectedSkus(null); setActiveFilterName(null) }
+  function clearAllSkus() { setSelectedSkus(new Set()); setActiveFilterName(null) }
+
+  function persistSavedFilters(next) {
+    setSavedFilters(next)
+    try {
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(next))
+    } catch {
+      // localStorage lleno o no disponible: el estado en memoria igual queda actualizado
+    }
+  }
+
+  function saveCurrentFilter() {
+    const name = newFilterName.trim()
+    if (!name) return
+    const skus = selectedSkus === null ? skuOptions.map(o => o.sku) : [...selectedSkus]
+    const withoutDup = savedFilters.filter(f => f.name !== name)
+    if (withoutDup.length >= MAX_SAVED_FILTERS) {
+      alert(`Maximum ${MAX_SAVED_FILTERS} saved filters. Delete one before saving another.`)
+      return
+    }
+    persistSavedFilters([...withoutDup, { name, skus }])
+    setActiveFilterName(name)
+    setSavingFilter(false)
+    setNewFilterName('')
+  }
+
+  function applySavedFilter(filter) {
+    const valid = filter.skus.filter(s => skuOptions.some(o => o.sku === s))
+    setSelectedSkus(new Set(valid))
+    setActiveFilterName(filter.name)
+  }
+
+  function deleteSavedFilter(name) {
+    persistSavedFilters(savedFilters.filter(f => f.name !== name))
+    if (activeFilterName === name) setActiveFilterName(null)
+  }
 
   function getSortVal(row, key) {
     if (key.startsWith('order_')) {
@@ -409,7 +499,11 @@ export default function OrderPlan() {
     })
 
     const today = isoDate(new Date())
-    XLSX.writeFile(wb, `PM_Order_Plan_${today}.xlsx`)
+    // El export ya usa `sorted` (filtrado por SKU); el filtro activo se refleja en el nombre del archivo
+    const filterPart = activeFilterName
+      ? '_' + activeFilterName.trim().replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+      : ''
+    XLSX.writeFile(wb, `PM_Order_Plan${filterPart}_${today}.xlsx`)
   }
 
   if (loading) return <div style={styles.loading}>Loading...</div>
@@ -464,6 +558,94 @@ export default function OrderPlan() {
           </p>
         </div>
         <div style={styles.headerControls}>
+          {plan.length > 0 && (
+            <div style={styles.skuFilter}>
+              <button style={styles.skuFilterBtn} onClick={() => setSkuFilterOpen(o => !o)}>
+                {activeFilterName
+                  ? `Filter: ${activeFilterName} (${selectedCount} SKUs) ▼`
+                  : `${selectedCount} of ${skuOptions.length} SKUs ▼`}
+              </button>
+              {skuFilterOpen && (
+                <>
+                  <div style={styles.skuBackdrop} onClick={() => setSkuFilterOpen(false)} />
+                  <div style={styles.skuPopover}>
+                    {savedFilters.length > 0 && (
+                      <div style={styles.savedSection}>
+                        <div style={styles.savedTitle}>Saved Filters</div>
+                        <div style={styles.savedChips}>
+                          {savedFilters.map(f => (
+                            <span
+                              key={f.name}
+                              style={{ ...styles.savedChip, ...(activeFilterName === f.name ? styles.savedChipActive : {}) }}
+                            >
+                              <button
+                                style={styles.savedChipLabel}
+                                onClick={() => applySavedFilter(f)}
+                                title={`Apply "${f.name}" (${f.skus.length} SKUs)`}
+                              >
+                                {f.name}
+                              </button>
+                              <button style={styles.savedChipDelete} onClick={() => deleteSavedFilter(f.name)} title="Delete filter">×</button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <input
+                      placeholder="Search SKU or name..."
+                      value={skuSearch}
+                      onChange={e => setSkuSearch(e.target.value)}
+                      style={styles.skuSearchInput}
+                      autoFocus
+                    />
+                    <div style={styles.skuActions}>
+                      <button style={styles.skuActionBtn} onClick={selectAllSkus}>Select all</button>
+                      <button style={styles.skuActionBtn} onClick={clearAllSkus}>Clear all</button>
+                    </div>
+                    <div style={styles.skuList}>
+                      {visibleSkuOptions.map(o => (
+                        <label key={o.sku} style={styles.skuItem}>
+                          <input type="checkbox" checked={isSkuSelected(o.sku)} onChange={() => toggleSku(o.sku)} />
+                          <span style={styles.skuItemCode}>{o.sku}</span>
+                          <span style={styles.skuItemName}>{o.name}</span>
+                        </label>
+                      ))}
+                      {visibleSkuOptions.length === 0 && <div style={styles.skuEmpty}>No matches</div>}
+                    </div>
+                    <div style={styles.savedFooter}>
+                      {savingFilter ? (
+                        <div style={styles.saveRow}>
+                          <input
+                            placeholder="Filter name..."
+                            value={newFilterName}
+                            onChange={e => setNewFilterName(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') saveCurrentFilter()
+                              if (e.key === 'Escape') { setSavingFilter(false); setNewFilterName('') }
+                            }}
+                            style={styles.saveInput}
+                            autoFocus
+                          />
+                          <button style={styles.saveConfirmBtn} onClick={saveCurrentFilter} disabled={!newFilterName.trim()}>Save</button>
+                          <button style={styles.saveCancelBtn} onClick={() => { setSavingFilter(false); setNewFilterName('') }}>✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          style={styles.saveFilterBtn}
+                          onClick={() => setSavingFilter(true)}
+                          disabled={savedFilters.length >= MAX_SAVED_FILTERS}
+                          title={savedFilters.length >= MAX_SAVED_FILTERS ? `Maximum ${MAX_SAVED_FILTERS} saved filters` : 'Save current selection'}
+                        >
+                          + Save current filter
+                          {savedFilters.length >= MAX_SAVED_FILTERS ? ` (${MAX_SAVED_FILTERS}/${MAX_SAVED_FILTERS})` : ''}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <button
             style={{ ...styles.toggleBtn, ...(groupBySupplier ? styles.toggleBtnActive : {}) }}
             onClick={() => setGroupBySupplier(g => !g)}
@@ -471,7 +653,7 @@ export default function OrderPlan() {
             {groupBySupplier ? '✓ ' : ''}Group by Supplier
           </button>
           {plan.length > 0 && (
-            <button style={styles.exportBtn} onClick={exportToExcel}>⬇ Exportar a Excel</button>
+            <button style={styles.exportBtn} onClick={exportToExcel}>⬇ Export to Excel</button>
           )}
         </div>
       </div>
@@ -708,6 +890,31 @@ const styles = {
   pageTitle: { fontSize: 26, fontWeight: 700, color: '#1a1a2e', marginBottom: 4 },
   pageDesc: { color: '#666', fontSize: 13 },
   headerControls: { display: 'flex', alignItems: 'center', gap: 12 },
+  skuFilter: { position: 'relative' },
+  skuFilterBtn: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, background: '#fff', cursor: 'pointer', fontWeight: 600, color: '#333', whiteSpace: 'nowrap' },
+  skuBackdrop: { position: 'fixed', inset: 0, zIndex: 10 },
+  skuPopover: { position: 'absolute', top: '100%', right: 0, marginTop: 6, background: '#fff', border: '1.5px solid #e0e0e0', borderRadius: 10, boxShadow: '0 6px 20px rgba(0,0,0,0.14)', padding: 10, width: 300, zIndex: 20 },
+  skuSearchInput: { width: '100%', padding: '7px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, marginBottom: 8, boxSizing: 'border-box' },
+  skuActions: { display: 'flex', gap: 8, marginBottom: 8 },
+  skuActionBtn: { flex: 1, padding: '6px 8px', border: '1px solid #e0e0e0', borderRadius: 6, background: '#f7f7f9', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer' },
+  skuList: { maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 },
+  skuItem: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: 4, fontSize: 12, cursor: 'pointer' },
+  skuItemCode: { fontFamily: 'monospace', color: '#333', whiteSpace: 'nowrap' },
+  skuItemName: { color: '#999', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  skuEmpty: { padding: 14, color: '#999', fontSize: 12, textAlign: 'center' },
+  savedSection: { marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #eee' },
+  savedTitle: { fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
+  savedChips: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  savedChip: { display: 'inline-flex', alignItems: 'center', background: '#f0f1f5', borderRadius: 6, overflow: 'hidden', border: '1px solid #e0e0e0' },
+  savedChipActive: { background: '#e7ebff', border: '1px solid #4455aa' },
+  savedChipLabel: { border: 'none', background: 'transparent', padding: '4px 4px 4px 8px', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  savedChipDelete: { border: 'none', background: 'transparent', padding: '4px 7px', fontSize: 14, lineHeight: 1, color: '#999', cursor: 'pointer' },
+  savedFooter: { marginTop: 8, paddingTop: 8, borderTop: '1px solid #eee' },
+  saveFilterBtn: { width: '100%', padding: '7px 8px', border: '1.5px dashed #4455aa', borderRadius: 6, background: '#f7f8ff', fontSize: 12, fontWeight: 600, color: '#4455aa', cursor: 'pointer' },
+  saveRow: { display: 'flex', gap: 6, alignItems: 'center' },
+  saveInput: { flex: 1, padding: '6px 8px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 12, boxSizing: 'border-box', minWidth: 0 },
+  saveConfirmBtn: { padding: '6px 10px', border: 'none', borderRadius: 6, background: '#4455aa', fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' },
+  saveCancelBtn: { padding: '6px 9px', border: '1px solid #e0e0e0', borderRadius: 6, background: '#fff', fontSize: 12, color: '#999', cursor: 'pointer' },
   toggleBtn: { background: '#fff', color: '#4455aa', border: '1.5px solid #c5ccea', borderRadius: 8, padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   toggleBtnActive: { background: '#4455aa', color: '#fff', border: '1.5px solid #4455aa' },
   exportBtn: { background: '#1F3864', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
