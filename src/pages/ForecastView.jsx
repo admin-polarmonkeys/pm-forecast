@@ -40,6 +40,7 @@ const COLUMNS = [
   { key: 'coverage_target_months', label: 'Coverage Target', align: 'right', param: true },
   { key: 'months_coverage_current', label: 'Months Coverage', align: 'right' },
   { key: 'qty_suggested', label: 'Orden Sugerida', align: 'right' },
+  { key: 'order_by_days', label: 'Pedir Antes De', align: 'right' },
   { key: 'total_landed_cost', label: 'Total Landed', align: 'right' },
 ]
 
@@ -58,6 +59,7 @@ const DEFAULT_COL_WIDTHS = {
   coverage_target_months: 120,
   months_coverage_current: 130,
   qty_suggested: 120,
+  order_by_days: 130,
   total_landed_cost: 120,
 }
 const MIN_COL_WIDTH = 60
@@ -93,6 +95,41 @@ function daysColor(d) {
   if (d <= 60) return '#ffecd5'  // naranja
   if (d <= 90) return '#fff9d5'  // amarillo
   return '#d5f5e3'               // verde
+}
+
+// Abreviaturas de mes en español para formatear "DD MMM YYYY" (ej. "15 Jul 2026")
+const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+function formatOrderDate(d) {
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${dd} ${MONTHS_ES[d.getMonth()]} ${d.getFullYear()}`
+}
+
+// "Pedir Antes De": fecha límite para colocar la orden considerando lead time del proveedor.
+// days_until_order = (months_coverage_current - coverage_target_months)*30 - lead_time_weeks*7
+// La fecha es hoy + max(0, días). Devuelve también `days` (clamp >= 0, null si no aplica) para ordenar.
+function orderByInfo(r) {
+  // Sin orden sugerida: no aplica
+  if (!r.qty_suggested || r.qty_suggested === 0) {
+    return { text: '—', color: undefined, bold: false, days: null }
+  }
+  const cov = r.months_coverage_current
+  // Sin cobertura actual: hay que pedir ya
+  if (cov == null || cov === 0) {
+    return { text: 'HOY ⚠️', color: '#c00', bold: true, days: 0 }
+  }
+  const target = r.coverage_target_months || 0
+  const lead = r.lead_time_weeks || 0
+  const daysUntil = (cov - target) * 30 - lead * 7
+  if (daysUntil <= 0) {
+    return { text: 'HOY ⚠️', color: '#c00', bold: true, days: 0 }
+  }
+  const d = new Date()
+  d.setDate(d.getDate() + Math.round(daysUntil))
+  let color = '#1f9d57'           // verde > 60 días
+  let bold = false
+  if (daysUntil <= 30) { color = '#c00'; bold = true }  // rojo negrita ≤ 30 días
+  else if (daysUntil <= 60) { color = '#e08600' }       // naranja 31–60 días
+  return { text: formatOrderDate(d), color, bold, days: Math.round(daysUntil) }
 }
 
 export default function ForecastView() {
@@ -279,9 +316,13 @@ export default function ForecastView() {
     setResults(runForecast({ ...updatedData, monthsBack }))
   }
 
-  // Agrega el campo calculado days_of_inventory para mostrarlo y poder ordenar por él
+  // Agrega campos calculados: days_of_inventory y la info de "Pedir Antes De"
+  // (_orderBy para el render, order_by_days para poder ordenar la columna)
   const enriched = useMemo(
-    () => results.map(r => ({ ...r, days_of_inventory: daysOfInventory(r) })),
+    () => results.map(r => {
+      const info = orderByInfo(r)
+      return { ...r, days_of_inventory: daysOfInventory(r), _orderBy: info, order_by_days: info.days }
+    }),
     [results]
   )
 
@@ -804,10 +845,15 @@ export default function ForecastView() {
                           userSelect: 'none',
                         }}
                         onClick={() => handleSort(col.key)}
-                        title={col.key === 'qty_transit' ? 'Incluye órdenes confirmadas con status Ordenado' : undefined}
+                        title={
+                          col.key === 'qty_transit' ? 'Incluye órdenes confirmadas con status Ordenado'
+                          : col.key === 'order_by_days' ? 'Fecha límite para colocar la orden considerando el lead time del proveedor'
+                          : undefined
+                        }
                       >
                         {col.label}
                         {col.key === 'qty_transit' ? ' *' : ''}
+                        {col.key === 'order_by_days' ? ' ⓘ' : ''}
                         {sortKey === col.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
                         <span
                           onMouseDown={e => startResize(e, col.key)}
@@ -854,6 +900,9 @@ export default function ForecastView() {
                       </td>
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: r.qty_suggested > 0 ? 700 : 400 }}>
                         {r.qty_suggested > 0 ? r.qty_suggested : '—'}
+                      </td>
+                      <td style={{ ...styles.td, textAlign: 'right', color: r._orderBy.color, fontWeight: r._orderBy.bold ? 700 : 400 }}>
+                        {r._orderBy.text}
                       </td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>
                         {fmtCurrency(r.qty_suggested * (landedCostBySku[r.sku] || 0))}
