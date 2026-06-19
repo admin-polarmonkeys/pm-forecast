@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 const NAV = [
   { id: 'dashboard', label: '🏠 Dashboard' },
   { id: 'forecast', label: '📦 Purchase Forecast' },
+  { id: 'inventory-value', label: '💰 Inventory Value' },
   { id: 'sales-sku', label: '📈 Sales History by SKU' },
   { id: 'sales-kit', label: '📦 Sales History by Kit' },
   { id: 'upload', label: '⬆️ Upload Data' },

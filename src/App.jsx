@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import ForecastView from './pages/ForecastView'
+import InventoryValue from './pages/InventoryValue'
 import SalesHistory from './pages/SalesHistory'
 import SalesHistoryByKit from './pages/SalesHistoryByKit'
 import UploadData from './pages/UploadData'
@@ -41,6 +42,7 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return <Dashboard />
       case 'forecast': return <ForecastView />
+      case 'inventory-value': return <InventoryValue />
       case 'sales-sku': return <SalesHistory />
       case 'sales-kit': return <SalesHistoryByKit />
       case 'upload':   return <UploadData />
