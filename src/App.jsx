@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import Layout from './components/Layout'
@@ -57,7 +57,8 @@ export default function App() {
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab} user={session.user}>
-      {renderTab()}
+      {/* key=activeTab fuerza el remontaje al cambiar de pestaña, garantizando datos frescos */}
+      <Fragment key={activeTab}>{renderTab()}</Fragment>
     </Layout>
   )
 }

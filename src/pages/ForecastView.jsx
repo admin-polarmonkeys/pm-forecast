@@ -135,6 +135,7 @@ function orderByInfo(r) {
 export default function ForecastView() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState(null)
   const [results, setResults] = useState([])
@@ -167,8 +168,9 @@ export default function ForecastView() {
   // Al correr un forecast nuevo, volvemos a "todos seleccionados" y limpiamos el filtro activo
   useEffect(() => { setSelectedSkus(null); setActiveFilterName(null) }, [results])
 
-  async function loadData() {
-    setLoading(true)
+  async function loadData({ refresh = false } = {}) {
+    // refresh: no usamos el loading de pantalla completa para no ocultar los resultados actuales
+    refresh ? setRefreshing(true) : setLoading(true)
     try {
       const [products, bom, sales, inventory, params, transit, latestRun] = await Promise.all([
         supabase.from('products').select('*'),
@@ -227,7 +229,7 @@ export default function ForecastView() {
     } catch (err) {
       setError(err.message)
     }
-    setLoading(false)
+    refresh ? setRefreshing(false) : setLoading(false)
   }
 
   async function handleRunForecast() {
@@ -598,6 +600,9 @@ export default function ForecastView() {
               {[3,4,5,6,9,12].map(m => <option key={m} value={m}>{m} months</option>)}
             </select>
           </div>
+          <button style={styles.refreshBtn} onClick={() => loadData({ refresh: true })} disabled={refreshing || loading}>
+            {refreshing ? '⏳ Refreshing...' : '↻ Refresh Data'}
+          </button>
           <button style={styles.runBtn} onClick={handleRunForecast} disabled={running || !data}>
             {running ? '⏳ Calculating...' : '▶ Run Forecast'}
           </button>
@@ -941,6 +946,7 @@ const styles = {
   controlLabel: { fontSize: 11, color: '#888', fontWeight: 600 },
   select: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, background: '#fff' },
   runBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
+  refreshBtn: { background: '#fff', color: '#4455aa', border: '1.5px solid #c5ccea', borderRadius: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   exportBtn: { background: '#1F3864', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20 },
   summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
