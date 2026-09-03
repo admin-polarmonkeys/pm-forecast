@@ -12,6 +12,12 @@ export default function UploadData() {
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
 
+  // SKUs del archivo de inventario que todavía no existen en products
+  const [newSkus, setNewSkus] = useState([])            // [{ sku, description, snapshot }]
+  const [newSkuSelected, setNewSkuSelected] = useState({}) // sku -> bool
+  const [addingNewSkus, setAddingNewSkus] = useState(false)
+  const [newSkuResult, setNewSkuResult] = useState(null)
+
   // Inventario en tránsito (persistente en Supabase)
   const [transitOrders, setTransitOrders] = useState([])
   const [transitForm, setTransitForm] = useState({ sku: '', qty: '', expected_date: '', notes: '' })
@@ -144,10 +150,63 @@ export default function UploadData() {
     return Object.values(skuSales)
   }
 
-  // Parse NetSuite inventory CSV
+  // Parse NetSuite inventory CSV ("Current Inventory Snapshot").
+  // Formato actual (posicional, sin header usable):
+  //   filas 1-6  metadata (razón social, título del reporte, filas vacías)
+  //   fila 7     "Item ,Description ,"        <- ojo: espacios al final
+  //   fila 8     "  ,,On Hand "               <- la columna de cantidad vive acá
+  //   fila 9     "Inventory Item,,"           <- fila de categoría
+  //   fila 10+   "PM-CHIL-008-HC,Chiller 0.8 HP,12"
+  // Como el header está partido en dos filas, leemos por índice de columna:
+  //   0 = SKU, 1 = Description, 2 = On Hand
   function parseInventoryCSV(text) {
-    // Strip BOM character (U+FEFF) so the first header isn't prefixed with an invisible char
+    // Strip BOM character (U+FEFF) so the first cell isn't prefixed with an invisible char
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1)
+
+    const parsed = Papa.parse(text, { header: false, skipEmptyLines: true })
+    const rows = parsed.data
+
+    // "1,234.00" -> 1234 ; vacío / no numérico -> 0
+    const cleanQty = val => {
+      const n = parseFloat(String(val ?? '').replace(/[,\s]/g, ''))
+      return isNaN(n) ? 0 : Math.round(n)
+    }
+
+    const records = []
+    let hasQtyCol = false // ¿alguna fila trae dato en la col 2? (los formatos viejos no la tienen)
+    for (const row of rows) {
+      // Toda fila de datos arranca con el SKU; metadata y headers no matchean "PM-"
+      const sku = String(row[0] ?? '').trim()
+      if (!sku.startsWith('PM-')) continue
+
+      if (String(row[2] ?? '').trim() !== '') hasQtyCol = true
+
+      records.push({
+        sku,
+        // se usa como products.name al dar de alta SKUs nuevos
+        description: String(row[1] ?? '').trim(),
+        qty_physical: cleanQty(row[2]),
+        // transit sale solo de la tabla transit_orders; este archivo no lo trae
+        qty_transit: 0,
+      })
+    }
+
+    // qty_unfulfilled_with_stock no se toca acá: viene del formulario manual.
+
+    // Si no hay filas PM-, o la columna 2 no existe/está vacía, el archivo no es de este
+    // formato: probamos los formatos viejos por nombre de header. Sin este segundo chequeo
+    // un CSV viejo (que también tiene el SKU en la col 0) importaría todo en 0.
+    if (records.length === 0 || !hasQtyCol) {
+      console.log('parseInventoryCSV: no matchea el formato posicional, probando formato con header')
+      const fallback = parseInventoryCSVWithHeader(text)
+      if (fallback.length > 0) return fallback
+    }
+
+    return records
+  }
+
+  // Fallback: formatos viejos de NetSuite con header de una sola fila
+  function parseInventoryCSVWithHeader(text) {
     const parsed = Papa.parse(text, {
       header: true,
       skipEmptyLines: true,
@@ -162,16 +221,17 @@ export default function UploadData() {
 
     for (const row of parsed.data) {
       // Try common NetSuite column names
-      const sku = (row['Item'] || row['Name'] || row['SKU'] || row['Item Name'] || '').trim()
+      const sku = String(row['Item'] || row['Name'] || row['SKU'] || row['Item Name'] || '').trim()
       if (!sku || !sku.startsWith('PM-')) continue
 
       const physical = parseInt(
         row['Quantity'] || row['Total Quantity'] || row['Quantity On Hand'] || row['On Hand'] || row['Physical'] || 0
       ) || 0
+      const description = String(row['Description'] || row['Display Name'] || row['Item Name'] || '').trim()
       // transit no viene en este CSV de NetSuite; por ahora siempre 0
       const transit = 0
 
-      records.push({ sku, qty_physical: physical, qty_transit: transit })
+      records.push({ sku, description, qty_physical: physical, qty_transit: transit })
     }
 
     return records
@@ -217,6 +277,8 @@ export default function UploadData() {
     setLoading(true)
     setError(null)
     setResults(null)
+    setNewSkus([])
+    setNewSkuResult(null)
 
     try {
       let salesCount = 0
@@ -254,13 +316,28 @@ export default function UploadData() {
           transitMap[t.sku] = (transitMap[t.sku] || 0) + (t.qty || 0)
         }
 
-        const finalRecords = records.map(r => ({
+        // Fila de inventory_snapshots a partir de un registro del CSV
+        const toSnapshotRow = r => ({
           sku: r.sku,
           snapshot_date: snapshotDate,
           qty_physical: r.qty_physical,
           qty_transit: transitMap[r.sku] || 0,
           qty_unfulfilled_with_stock: unfulfilledMap[r.sku] || 0,
-        }))
+        })
+
+        // Detectar SKUs nuevos: están en el archivo pero no en el catálogo products.
+        // inventory_snapshots.sku tiene FK a products, así que los nuevos NO se pueden
+        // guardar todavía — se separan y se ofrecen para dar de alta en el panel de abajo.
+        const { data: existingProducts, error: prodErr } = await supabase
+          .from('products')
+          .select('sku')
+        if (prodErr) throw new Error(`Inventory error: ${prodErr.message}`)
+        const knownSkus = new Set((existingProducts || []).map(p => p.sku))
+
+        const finalRecords = records.filter(r => knownSkus.has(r.sku)).map(toSnapshotRow)
+        const pendingSkus = records
+          .filter(r => !knownSkus.has(r.sku))
+          .map(r => ({ sku: r.sku, description: r.description || '', snapshot: toSnapshotRow(r) }))
 
         if (finalRecords.length > 0) {
           const { error } = await supabase
@@ -268,6 +345,11 @@ export default function UploadData() {
             .upsert(finalRecords, { onConflict: 'sku,snapshot_date' })
           if (error) throw new Error(`Inventory error: ${error.message}`)
           inventoryCount = finalRecords.length
+        }
+
+        if (pendingSkus.length > 0) {
+          setNewSkus(pendingSkus)
+          setNewSkuSelected(Object.fromEntries(pendingSkus.map(r => [r.sku, true]))) // todos tildados por defecto
         }
       }
 
@@ -303,6 +385,67 @@ export default function UploadData() {
       setError(err.message)
     }
     setLoading(false)
+  }
+
+  function toggleNewSku(sku) {
+    setNewSkuSelected(prev => ({ ...prev, [sku]: !prev[sku] }))
+  }
+
+  function ignoreNewSkus() {
+    setNewSkus([])
+    setNewSkuResult(null)
+  }
+
+  // Alta de SKUs nuevos: catálogo + parámetros por defecto + su stock del archivo.
+  // El orden importa: purchase_params e inventory_snapshots tienen FK a products.
+  async function addSelectedNewSkus() {
+    const selected = newSkus.filter(r => newSkuSelected[r.sku])
+    if (selected.length === 0) {
+      setError('Select at least one SKU to add')
+      return
+    }
+    setAddingNewSkus(true)
+    setError(null)
+
+    try {
+      // 1. Catálogo. products.name es NOT NULL: si el CSV no trae descripción, usamos el SKU
+      const { error: prodErr } = await supabase.from('products').insert(
+        selected.map(r => ({
+          sku: r.sku,
+          name: r.description || r.sku,
+          type: 'component',
+          is_active: true,
+        }))
+      )
+      if (prodErr) throw new Error(prodErr.message)
+
+      // 2. Parámetros de compra por defecto
+      const { error: paramsErr } = await supabase.from('purchase_params').insert(
+        selected.map(r => ({
+          sku: r.sku,
+          lead_time_weeks: 12,
+          coverage_target_months: 3,
+          growth_factor: 1.40,
+          moq: 1,
+        }))
+      )
+      if (paramsErr) throw new Error(paramsErr.message)
+
+      // 3. Ya existen en products, así que ahora sí se puede guardar su stock del archivo
+      const { error: invErr } = await supabase
+        .from('inventory_snapshots')
+        .upsert(selected.map(r => r.snapshot), { onConflict: 'sku,snapshot_date' })
+      if (invErr) throw new Error(invErr.message)
+
+      setNewSkuResult(
+        `${selected.length} new product${selected.length === 1 ? '' : 's'} added to the system with default purchase params and their stock from the file`
+      )
+      setResults(prev => (prev ? { ...prev, inventoryCount: prev.inventoryCount + selected.length } : prev))
+      setNewSkus([])
+    } catch (err) {
+      setError(`New products error: ${err.message}`)
+    }
+    setAddingNewSkus(false)
   }
 
   function addUnfulfilled() {
@@ -509,6 +652,41 @@ export default function UploadData() {
         </div>
       )}
 
+      {newSkus.length > 0 && (
+        <div style={styles.newSkuPanel}>
+          <div style={styles.newSkuTitle}>
+            ⚠️ Found {newSkus.length} new product{newSkus.length === 1 ? '' : 's'} in the inventory file not yet in the system
+          </div>
+          <p style={styles.newSkuDesc}>
+            Their stock was <strong>not</strong> imported: a SKU must exist in the catalog first.
+            Add them below and their quantities from this file will be saved too.
+          </p>
+          <div style={styles.newSkuList}>
+            {newSkus.map(r => (
+              <label key={r.sku} style={styles.newSkuRow}>
+                <input
+                  type="checkbox"
+                  checked={!!newSkuSelected[r.sku]}
+                  onChange={() => toggleNewSku(r.sku)}
+                />
+                <span style={styles.newSkuCode}>{r.sku}</span>
+                <span style={styles.newSkuName}>{r.description || <em>(no description in file)</em>}</span>
+                <span style={styles.newSkuQty}>{r.snapshot.qty_physical} on hand</span>
+              </label>
+            ))}
+          </div>
+          <div style={styles.newSkuActions}>
+            <button style={styles.newSkuAddBtn} onClick={addSelectedNewSkus} disabled={addingNewSkus}>
+              {addingNewSkus ? 'Adding...' : 'Add selected to system'}
+            </button>
+            <button style={styles.newSkuIgnoreBtn} onClick={ignoreNewSkus} disabled={addingNewSkus}>
+              Ignore
+            </button>
+          </div>
+        </div>
+      )}
+      {newSkuResult && <div style={styles.success}>✅ {newSkuResult}</div>}
+
       <button style={styles.uploadBtn} onClick={handleUpload} disabled={loading}>
         {loading ? 'Processing...' : '⬆️ Process and Save'}
       </button>
@@ -550,6 +728,17 @@ const styles = {
   transitTr: { borderBottom: '1px solid #f0f0f0' },
   transitTd: { padding: '8px 12px', color: '#333', verticalAlign: 'middle' },
   transitEmpty: { fontSize: 13, color: '#999', fontStyle: 'italic' },
+  newSkuPanel: { background: '#fffbe6', border: '1px solid #ffe9a8', borderRadius: 8, padding: '16px 18px', marginTop: 20 },
+  newSkuTitle: { fontSize: 14, fontWeight: 700, color: '#7a5a1a', marginBottom: 6 },
+  newSkuDesc: { fontSize: 12, color: '#8a6a2a', marginBottom: 14 },
+  newSkuList: { display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflowY: 'auto', marginBottom: 14 },
+  newSkuRow: { display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, background: '#fff', border: '1px solid #f0e4c0', borderRadius: 6, padding: '7px 10px', cursor: 'pointer' },
+  newSkuCode: { fontWeight: 600, color: '#1a1a2e', minWidth: 160 },
+  newSkuName: { color: '#666', flex: 1 },
+  newSkuQty: { color: '#888', fontSize: 12, whiteSpace: 'nowrap' },
+  newSkuActions: { display: 'flex', gap: 10 },
+  newSkuAddBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, padding: '9px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newSkuIgnoreBtn: { background: 'transparent', color: '#7a5a1a', border: '1.5px solid #e0cf9a', borderRadius: 6, padding: '9px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, border: '1px solid #fcc', marginTop: 20 },
   success: { background: '#f0fff4', color: '#1a7a4a', padding: '12px 16px', borderRadius: 8, fontSize: 13, border: '1px solid #9de', marginTop: 20 },
   uploadBtn: {
