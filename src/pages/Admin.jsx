@@ -251,7 +251,7 @@ export default function Admin() {
   if (error) {
     return (
       <div>
-        <h1 style={styles.pageTitle}>🛠️ Admin</h1>
+        <h1 style={styles.pageTitle}>🏭 Suppliers</h1>
         <div style={styles.errorBox}>
           <strong>Could not load the data:</strong> {error}
           <div style={styles.errorHint}>
@@ -266,7 +266,7 @@ export default function Admin() {
 
   return (
     <div>
-      <h1 style={styles.pageTitle}>🛠️ Admin</h1>
+      <h1 style={styles.pageTitle}>🏭 Suppliers</h1>
       <p style={styles.pageDesc}>Suppliers, product assignment and global forecast settings</p>
 
       {flash && (

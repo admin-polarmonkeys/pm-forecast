@@ -12,7 +12,8 @@ const NAV = [
   { id: 'params', label: '⚙️ Parameters' },
   { id: 'orders', label: '🛒 Purchase Orders' },
   { id: 'history', label: '📋 Forecast History' },
-  { id: 'admin', label: '🛠️ Admin' },
+  { id: 'admin', label: '🏭 Suppliers' },
+  { id: 'bom', label: '🧩 BOM' },
 ]
 
 export default function Layout({ children, activeTab, onTabChange, user }) {

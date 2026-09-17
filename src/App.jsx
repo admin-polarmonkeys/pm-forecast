@@ -13,6 +13,7 @@ import ParamsView from './pages/ParamsView'
 import PurchaseOrders from './pages/PurchaseOrders'
 import ForecastHistory from './pages/ForecastHistory'
 import Admin from './pages/Admin'
+import BOMEditor from './pages/BOMEditor'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -69,6 +70,7 @@ export default function App() {
       case 'orders':   return <PurchaseOrders />
       case 'history':  return <ForecastHistory />
       case 'admin':    return <Admin />
+      case 'bom':      return <BOMEditor />
       default:         return <Dashboard />
     }
   }
