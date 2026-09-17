@@ -2,12 +2,77 @@ import { useState, useEffect } from 'react'
 import Papa from 'papaparse'
 import { supabase } from '../lib/supabase'
 
+const TODAY = new Date().toISOString().split('T')[0]
+
+function pad2(n) { return String(n).padStart(2, '0') }
+
+// Arma 'YYYY-MM-DD' solo si (y, m, d) es una fecha real y cae en una ventana razonable
+// (3 años atrás / 1 año adelante). La ventana evita falsos positivos con números sueltos
+// del nombre del archivo (versiones, números de reporte, etc.).
+function buildDate(y, m, d) {
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null
+  const dt = new Date(y, m - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
+  const now = new Date()
+  const min = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate())
+  const max = new Date(now.getFullYear() + 1, now.getMonth(), now.getDate())
+  if (dt < min || dt > max) return null
+  return `${y}-${pad2(m)}-${pad2(d)}`
+}
+
+// Años de 2 dígitos -> 2000s (NetSuite exporta "26" por 2026)
+function expandYear(yy) { return yy < 100 ? 2000 + yy : yy }
+
+// Intenta deducir la fecha del snapshot desde el nombre del archivo.
+// NetSuite suele embeberla: "Inventory_090326.csv" (MMDDYY),
+// "CurrentInventorySnapshot322.csv" (MDD del año en curso), "Inventory_2026-09-03.csv".
+// Devuelve 'YYYY-MM-DD' o null si no encuentra nada válido.
+export function detectDateFromFilename(filename) {
+  if (!filename) return null
+  const base = String(filename).replace(/\.[^.]+$/, '') // saca la extensión
+  const thisYear = new Date().getFullYear()
+
+  // a) ISO: 2026-09-03 / 2026_09_03 / 20260903
+  let m = base.match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})/)
+  if (m) {
+    const d = buildDate(Number(m[1]), Number(m[2]), Number(m[3]))
+    if (d) return d
+  }
+
+  // b) Con separadores: 9-3-26 / 09_03_2026 / 9.3.26
+  m = base.match(/(\d{1,2})[-_.](\d{1,2})[-_.](\d{2,4})/)
+  if (m) {
+    const d = buildDate(expandYear(Number(m[3])), Number(m[1]), Number(m[2]))
+    if (d) return d
+  }
+
+  // c) Bloques de dígitos pegados, del más largo/específico al más corto
+  for (const run of base.match(/\d+/g) || []) {
+    let d = null
+    if (run.length === 8) {          // MMDDYYYY (YYYYMMDD ya lo cubrió el patrón a)
+      d = buildDate(Number(run.slice(4)), Number(run.slice(0, 2)), Number(run.slice(2, 4)))
+    } else if (run.length === 6) {   // MMDDYY
+      d = buildDate(expandYear(Number(run.slice(4))), Number(run.slice(0, 2)), Number(run.slice(2, 4)))
+    } else if (run.length === 5) {   // MDDYY
+      d = buildDate(expandYear(Number(run.slice(3))), Number(run.slice(0, 1)), Number(run.slice(1, 3)))
+    } else if (run.length === 4) {   // MMDD, año en curso
+      d = buildDate(thisYear, Number(run.slice(0, 2)), Number(run.slice(2)))
+    } else if (run.length === 3) {   // MDD, año en curso
+      d = buildDate(thisYear, Number(run.slice(0, 1)), Number(run.slice(1)))
+    }
+    if (d) return d
+  }
+  return null
+}
+
 export default function UploadData() {
   const [salesFile, setSalesFile] = useState(null)
   const [inventoryFile, setInventoryFile] = useState(null)
   const [costFile, setCostFile] = useState(null)
   const [unfulfilled, setUnfulfilled] = useState([{ sku: '', qty: '' }])
-  const [snapshotDate, setSnapshotDate] = useState(new Date().toISOString().split('T')[0])
+  const [snapshotDate, setSnapshotDate] = useState(TODAY)
+  // 'filename' = la fecha salió del nombre del archivo; null = default de hoy o editada a mano
+  const [dateSource, setDateSource] = useState(null)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError] = useState(null)
@@ -381,6 +446,7 @@ export default function UploadData() {
       setSalesFile(null)
       setInventoryFile(null)
       setCostFile(null)
+      setDateSource(null)
     } catch (err) {
       setError(err.message)
     }
@@ -452,6 +518,20 @@ export default function UploadData() {
     setUnfulfilled([...unfulfilled, { sku: '', qty: '' }])
   }
 
+  // Al elegir el CSV de inventario, intenta sacar la fecha del nombre del archivo.
+  // Si no la encuentra, deja hoy como default y el aviso queda visible para que se confirme.
+  function handleInventoryFile(file) {
+    setInventoryFile(file || null)
+    if (!file) { setDateSource(null); return }
+    const detected = detectDateFromFilename(file.name)
+    if (detected) {
+      setSnapshotDate(detected)
+      setDateSource('filename')
+    } else {
+      setDateSource(null)
+    }
+  }
+
   function updateUnfulfilled(idx, field, val) {
     const updated = [...unfulfilled]
     updated[idx][field] = val
@@ -461,6 +541,10 @@ export default function UploadData() {
   function removeUnfulfilled(idx) {
     setUnfulfilled(unfulfilled.filter((_, i) => i !== idx))
   }
+
+  // El aviso aparece cuando hay archivo de inventario cargado y la fecha sigue siendo
+  // el default de hoy sin haberse detectado del nombre del archivo.
+  const showDateWarning = !!inventoryFile && dateSource !== 'filename' && snapshotDate === TODAY
 
   return (
     <div>
@@ -504,16 +588,24 @@ export default function UploadData() {
             type="file"
             accept=".csv"
             style={{ display: 'none' }}
-            onChange={e => setInventoryFile(e.target.files[0])}
+            onChange={e => handleInventoryFile(e.target.files[0])}
           />
-          <div style={styles.dateField}>
-            <label style={styles.label}>Snapshot date</label>
+          <div style={{ ...styles.dateField, ...(showDateWarning ? styles.dateFieldAlert : null) }}>
+            <label style={styles.dateLabel}>📅 Snapshot date</label>
             <input
               type="date"
               value={snapshotDate}
-              onChange={e => setSnapshotDate(e.target.value)}
-              style={styles.dateInput}
+              onChange={e => { setSnapshotDate(e.target.value); setDateSource(null) }}
+              style={{ ...styles.dateInput, ...(showDateWarning ? styles.dateInputAlert : null) }}
             />
+            {showDateWarning && (
+              <div style={styles.dateWarning}>
+                ⚠️ Confirm the snapshot date matches your NetSuite report date
+              </div>
+            )}
+            {inventoryFile && dateSource === 'filename' && (
+              <div style={styles.dateNote}>✓ Date detected from filename</div>
+            )}
           </div>
         </div>
       </div>
@@ -712,9 +804,13 @@ const styles = {
   },
   uploadPrompt: { color: '#8899cc', fontSize: 14 },
   fileName: { color: '#1a7a4a', fontSize: 14, fontWeight: 600 },
-  dateField: { marginTop: 16 },
-  label: { display: 'block', fontSize: 12, fontWeight: 600, color: '#666', marginBottom: 4 },
-  dateInput: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 14, width: '100%' },
+  dateField: { marginTop: 16, padding: 12, borderRadius: 8, background: '#f7f8fa', border: '1.5px solid #e8e8ec' },
+  dateFieldAlert: { background: '#fffaf0', borderColor: '#f0c040' },
+  dateLabel: { display: 'block', fontSize: 13, fontWeight: 700, color: '#333', marginBottom: 6 },
+  dateInput: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 14, width: '100%', boxSizing: 'border-box' },
+  dateInputAlert: { borderColor: '#f0c040', background: '#fff' },
+  dateWarning: { marginTop: 8, padding: '8px 10px', background: '#fff4d5', border: '1.5px solid #f0c040', borderRadius: 6, fontSize: 12, fontWeight: 600, color: '#8a5a00', lineHeight: 1.4 },
+  dateNote: { marginTop: 8, fontSize: 12, fontWeight: 600, color: '#1a7a4a' },
   unfulfilledList: { display: 'flex', flexDirection: 'column', gap: 10 },
   unfulfilledRow: { display: 'flex', gap: 10, alignItems: 'center' },
   input: { padding: '8px 12px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 14 },

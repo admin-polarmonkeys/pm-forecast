@@ -39,6 +39,7 @@ const COLUMNS = [
   { key: 'lead_time_weeks', label: 'Lead Time (wk)', align: 'right', param: true },
   { key: 'coverage_target_months', label: 'Coverage Target', align: 'right', param: true },
   { key: 'months_coverage_current', label: 'Months Coverage', align: 'right' },
+  { key: 'available_coverage', label: 'Available Coverage', align: 'right' },
   { key: 'qty_suggested', label: 'Suggested Order', align: 'right' },
   { key: 'order_by_days', label: 'Order By', align: 'right' },
   { key: 'total_landed_cost', label: 'Total Landed', align: 'right' },
@@ -58,6 +59,7 @@ const DEFAULT_COL_WIDTHS = {
   lead_time_weeks: 110,
   coverage_target_months: 120,
   months_coverage_current: 130,
+  available_coverage: 150,
   qty_suggested: 120,
   order_by_days: 130,
   total_landed_cost: 120,
@@ -80,6 +82,14 @@ function coverageColor(months) {
   if (months <= 2) return '#ffecd5'
   if (months <= 3) return '#fff9d5'
   return '#d5f5e3'
+}
+
+// Cobertura solo con stock disponible (sin contar tránsito) = disponible / demanda proyectada mensual.
+// Complementa a months_coverage_current, que sí incluye el tránsito.
+function availableCoverage(r) {
+  const proj = r.projected_monthly_demand
+  if (!proj || proj === 0) return null
+  return r.qty_available_real / proj
 }
 
 // Días de inventario = (disponible + tránsito) / demanda proyectada mensual × 30
@@ -323,7 +333,13 @@ export default function ForecastView() {
   const enriched = useMemo(
     () => results.map(r => {
       const info = orderByInfo(r)
-      return { ...r, days_of_inventory: daysOfInventory(r), _orderBy: info, order_by_days: info.days }
+      return {
+        ...r,
+        days_of_inventory: daysOfInventory(r),
+        available_coverage: availableCoverage(r),
+        _orderBy: info,
+        order_by_days: info.days,
+      }
     }),
     [results]
   )
@@ -489,6 +505,7 @@ export default function ForecastView() {
       { header: 'Lead Time (wk)', get: r => r.lead_time_weeks, w: 14, z: '0' },
       { header: 'Coverage Target', get: r => r.coverage_target_months, w: 15, z: '0.0' },
       { header: 'Months Coverage', get: r => r.months_coverage_current, w: 15, z: '0.0' },
+      { header: 'Available Coverage', get: r => r.available_coverage, w: 17, z: '0.0' },
       { header: 'Suggested Order', get: r => r.qty_suggested, w: 14, z: '#,##0' },
       { header: 'Total Landed', get: r => r.qty_suggested * (landedCostBySku[r.sku] || 0), w: 16, z: '"$"#,##0.00' },
     ]
@@ -852,6 +869,7 @@ export default function ForecastView() {
                         onClick={() => handleSort(col.key)}
                         title={
                           col.key === 'qty_transit' ? 'Includes confirmed orders with status Ordered'
+                          : col.key === 'available_coverage' ? 'Months of coverage from available stock only, excluding in-transit units'
                           : col.key === 'order_by_days' ? 'Deadline to place the order accounting for the supplier lead time'
                           : undefined
                         }
@@ -901,6 +919,11 @@ export default function ForecastView() {
                       <td style={{ ...styles.td, textAlign: 'right' }}>
                         <span style={{ ...styles.coverageBadge, background: coverageColor(r.months_coverage_current) }}>
                           {r.months_coverage_current != null ? `${fmt(r.months_coverage_current)}m` : '—'}
+                        </span>
+                      </td>
+                      <td style={{ ...styles.td, textAlign: 'right' }}>
+                        <span style={{ ...styles.coverageBadge, background: coverageColor(r.available_coverage) }}>
+                          {r.available_coverage != null ? `${r.available_coverage.toFixed(1)}m` : '—'}
                         </span>
                       </td>
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: r.qty_suggested > 0 ? 700 : 400 }}>
