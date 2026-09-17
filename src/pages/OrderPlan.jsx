@@ -33,6 +33,74 @@ function addMonths(base, months) {
   return d
 }
 
+// ============================================================
+// BLACKOUT DE CHINA (Año Nuevo Chino)
+// Las fechas se guardan en app_settings con año, pero el cierre se repite todos los años,
+// así que toda la comparación se hace por mes/día ignorando el año.
+// ============================================================
+
+// Claves en app_settings
+const BLACKOUT_START_KEY = 'china_blackout_start'
+const BLACKOUT_END_KEY = 'china_blackout_end'
+
+// Parsea 'YYYY-MM-DD' a mano. new Date('2026-01-28') lo interpreta como UTC y en zonas
+// horarias negativas cae un día antes, por eso no lo usamos.
+export function parseSettingDate(value) {
+  if (!value) return null
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const month = Number(m[2])
+  const day = Number(m[3])
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  return { year: Number(m[1]), month, day }
+}
+
+// Config del blackout a partir de los dos valores crudos de app_settings.
+// Devuelve null si falta cualquiera de los dos: sin config, el plan se calcula normal.
+export function buildBlackout(startValue, endValue) {
+  const start = parseSettingDate(startValue)
+  const end = parseSettingDate(endValue)
+  if (!start || !end) return null
+  return {
+    startMonth: start.month,
+    startDay: start.day,
+    startMD: start.month * 100 + start.day,
+    endMD: end.month * 100 + end.day,
+    startLabel: `${MONTHS_ES[start.month - 1]} ${start.day}`,
+    endLabel: `${MONTHS_ES[end.month - 1]} ${end.day}`,
+  }
+}
+
+// ¿La fecha cae dentro de la ventana de cierre? Se compara solo mes/día.
+// Si la ventana cruza el año nuevo (startMD > endMD) el rango es "desde el inicio hasta
+// fin de año, o desde enero hasta el fin".
+function insideBlackout(date, blackout) {
+  const md = (date.getMonth() + 1) * 100 + date.getDate()
+  return blackout.startMD > blackout.endMD
+    ? (md >= blackout.startMD || md <= blackout.endMD)
+    : (md >= blackout.startMD && md <= blackout.endMD)
+}
+
+// Último día hábil (lunes a viernes) anterior a `date`. No contempla feriados.
+function lastBusinessDayBefore(date) {
+  const d = new Date(date.getTime())
+  d.setDate(d.getDate() - 1)
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1)
+  return d
+}
+
+// Si `date` cae dentro del cierre, devuelve el último día hábil antes de que empiece.
+// Si no, devuelve null y la orden queda como estaba.
+export function shiftBeforeBlackout(date, blackout) {
+  if (!blackout || !insideBlackout(date, blackout)) return null
+  const md = (date.getMonth() + 1) * 100 + date.getDate()
+  // Si la ventana cruza el año nuevo y la fecha cayó del lado de enero,
+  // el cierre arrancó el año anterior.
+  const wrapsIntoNextYear = blackout.startMD > blackout.endMD && md <= blackout.endMD
+  const year = wrapsIntoNextYear ? date.getFullYear() - 1 : date.getFullYear()
+  return lastBusinessDayBefore(new Date(year, blackout.startMonth - 1, blackout.startDay))
+}
+
 // Filtros de SKU guardados por el usuario en localStorage. Formato: [{ name, skus: [] }]
 const SAVED_FILTERS_KEY = 'pm_orderplan_filters'
 const MAX_SAVED_FILTERS = 10
@@ -50,6 +118,8 @@ function loadSavedFilters() {
     return []
   }
 }
+
+const BLACKOUT_TOOLTIP = 'Moved earlier due to China factory closure (Chinese New Year)'
 
 const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12 }
 
@@ -113,21 +183,26 @@ export default function OrderPlan() {
 
       if (!run) {
         // Sin corridas todavía: el plan se construye sobre el forecast, así que no hay nada que mostrar
-        setData({ orders: [], nameBySku: {}, runDate: null, runId: null })
+        setData({ orders: [], nameBySku: {}, runDate: null, runId: null, chinaSuppliers: new Set(), blackoutStart: null, blackoutEnd: null })
         setLoading(false)
         return
       }
 
       // purchase_orders de esa corrida (ya traen demanda, stock, lead time, costos, etc.)
       // + products para el nombre del SKU + transit_orders para el tránsito EN TIEMPO REAL
-      const [ordersRes, products, transit] = await Promise.all([
+      const [ordersRes, products, transit, settingsRes, suppliersRes] = await Promise.all([
         supabase.from('purchase_orders').select('*').eq('run_id', run.id),
         supabase.from('products').select('sku, name'),
         supabase.from('transit_orders').select('sku, qty'),
+        supabase.from('app_settings').select('key, value').in('key', [BLACKOUT_START_KEY, BLACKOUT_END_KEY]),
+        supabase.from('suppliers').select('code, is_china'),
       ])
       if (ordersRes.error) throw ordersRes.error
       if (products.error) throw products.error
       if (transit.error) throw transit.error
+      // app_settings y suppliers son tablas nuevas (ver supabase/admin_setup.sql). Si todavía
+      // no existen, sus errores se ignoran a propósito: el plan se calcula sin blackout en vez
+      // de romper toda la página.
 
       const nameBySku = {}
       for (const p of (products.data || [])) nameBySku[p.sku] = p.name
@@ -137,10 +212,23 @@ export default function OrderPlan() {
       const transitBySku = {}
       for (const t of (transit.data || [])) transitBySku[t.sku] = (transitBySku[t.sku] || 0) + (t.qty || 0)
 
+      // Códigos de proveedor marcados como China, normalizados para que un espacio o
+      // una diferencia de mayúsculas no haga fallar el match contra purchase_orders.supplier
+      const chinaSuppliers = new Set(
+        (suppliersRes.data || [])
+          .filter(sup => sup.is_china)
+          .map(sup => String(sup.code || '').trim().toLowerCase())
+          .filter(Boolean)
+      )
+      const settings = Object.fromEntries((settingsRes.data || []).map(x => [x.key, x.value]))
+
       setData({
         orders: ordersRes.data || [],
         nameBySku,
         transitBySku,
+        chinaSuppliers,
+        blackoutStart: settings[BLACKOUT_START_KEY] || null,
+        blackoutEnd: settings[BLACKOUT_END_KEY] || null,
         hasTransitData: (transit.data || []).length > 0,
         runDate: run.run_date || run.created_at || null,
         runId: run.id,
@@ -163,6 +251,13 @@ export default function OrderPlan() {
     return Array.from({ length: numOrders }, (_, i) => addMonths(now, i * applied.orderFrequency))
   }, [numOrders, applied.orderFrequency])
 
+  // Config del blackout. Si falta alguna de las dos fechas queda en null y el plan
+  // se calcula exactamente como antes.
+  const blackout = useMemo(
+    () => (data ? buildBlackout(data.blackoutStart, data.blackoutEnd) : null),
+    [data]
+  )
+
   // Plan de compras por SKU, construido sobre los purchase_orders de la última corrida.
   // No recalculamos demanda/stock/lead time: se toman directo del forecast guardado.
   const plan = useMemo(() => {
@@ -183,6 +278,9 @@ export default function OrderPlan() {
       // Tránsito en vivo desde transit_orders; si la tabla está vacía, fallback al de la corrida
       const qtyTransit = data.hasTransitData ? (data.transitBySku[po.sku] || 0) : (po.qty_transit || 0)
       const currentStock = (po.qty_available_real || 0) + qtyTransit
+      // El blackout solo aplica a proveedores marcados como China en la página Admin
+      const isChina = !!blackout &&
+        data.chinaSuppliers.has(String(po.supplier || '').trim().toLowerCase())
 
       // Simulación de inventario corrido: incluye órdenes previas ya colocadas
       let orderedSoFar = 0
@@ -193,15 +291,40 @@ export default function OrderPlan() {
         if (invBefore < projected * coverageTarget) {
           const need = projected * (coverageTarget + orderFrequency) - invBefore
           qty = Math.max(moq, Math.ceil(need / moq) * moq)
-          orderedSoFar += qty
         }
         // El slot marca cuándo el inventario toca el mínimo; la orden se coloca antes,
         // descontando el lead time (date = fecha de colocación de la orden).
-        const date = new Date(slotDates[i].getTime())
+        let date = new Date(slotDates[i].getTime())
         date.setDate(date.getDate() - leadWeeks * 7)
+
+        // Ajuste por cierre de fábricas en China: si la fecha de colocación cae dentro del
+        // blackout, la orden se adelanta al último día hábil previo. Como el lead time no
+        // cambia, la mercadería también llega antes y este lote tiene que durar esos días
+        // de más hasta la orden siguiente, así que se le suma la demanda de ese período.
+        let isBlackoutAdjusted = false
+        let originalDate = null
+        let daysMoved = 0
+        if (qty > 0 && isChina) {
+          const moved = shiftBeforeBlackout(date, blackout)
+          if (moved) {
+            originalDate = date
+            daysMoved = Math.round((date - moved) / 86400000)
+            date = moved
+            const extra = projected * (daysMoved / 30)
+            qty = Math.max(moq, Math.ceil((qty + extra) / moq) * moq)
+            isBlackoutAdjusted = true
+          }
+        }
+
+        // La cantidad final (ya ajustada) alimenta la simulación de los slots siguientes
+        if (qty > 0) orderedSoFar += qty
+
         const days = Math.round((date - now) / 86400000)
         const overdue = days < 0
-        orders.push({ qty, date, days, hasOrder: qty > 0, overdue })
+        orders.push({
+          qty, date, days, hasOrder: qty > 0, overdue,
+          isBlackoutAdjusted, originalDate, daysMoved,
+        })
       }
 
       const totalQty = orders.reduce((s, o) => s + o.qty, 0)
@@ -218,7 +341,7 @@ export default function OrderPlan() {
       })
     }
     return rows
-  }, [data, applied, numOrders, slotDates])
+  }, [data, applied, numOrders, slotDates, blackout])
 
   const suppliers = useMemo(() => {
     const set = new Set(plan.map(r => r.supplier).filter(Boolean))
@@ -357,6 +480,7 @@ export default function OrderPlan() {
       // con las cantidades sumadas. Si no, el SKU se duplica en la vista expandida.
       const bySku = new Map()
       let qty = 0, fob = 0, landed = 0
+      let blackoutCount = 0 // órdenes del mes adelantadas por el cierre en China
       for (const r of sorted) {
         for (const o of r.orders) {
           // Agrupamos por mes de la fecha de COLOCACIÓN (o.date). Las vencidas (placeDate en el
@@ -365,11 +489,13 @@ export default function OrderPlan() {
           if (o.hasOrder && eff.getFullYear() === y && eff.getMonth() === mo) {
             const oFob = o.qty * (r.fob || 0)
             const oLanded = o.qty * (r.landed || 0)
+            if (o.isBlackoutAdjusted) blackoutCount++
             const existing = bySku.get(r.sku)
             if (existing) {
               existing.qty += o.qty
               existing.totalFob += oFob
               existing.totalLanded += oLanded
+              existing.blackoutAdjusted = existing.blackoutAdjusted || o.isBlackoutAdjusted
             } else {
               bySku.set(r.sku, {
                 sku: r.sku,
@@ -380,6 +506,7 @@ export default function OrderPlan() {
                 totalFob: oFob,
                 landedCost: r.landed,
                 totalLanded: oLanded,
+                blackoutAdjusted: o.isBlackoutAdjusted,
               })
             }
             qty += o.qty
@@ -389,10 +516,19 @@ export default function OrderPlan() {
         }
       }
       const items = [...bySku.values()]
-      months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: items.length, qty, fob, landed, items })
+      months.push({ label: `${MONTHS_ES[mo]} ${y}`, count: items.length, qty, fob, landed, items, blackoutCount })
     }
     return months
   }, [sorted, applied.planningHorizon])
+
+  // Cuántas órdenes visibles se adelantaron por el blackout (para el cartel de arriba)
+  const blackoutAdjustedCount = useMemo(
+    () => sorted.reduce(
+      (n, r) => n + r.orders.filter(o => o.hasOrder && o.isBlackoutAdjusted).length,
+      0
+    ),
+    [sorted]
+  )
 
   const monthlyTotals = useMemo(() => ({
     count: monthlySummary.reduce((s, r) => s + r.count, 0),
@@ -551,8 +687,15 @@ export default function OrderPlan() {
       <td style={styles.td}><span style={styles.supplierBadge}>{r.supplier}</span></td>
       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.leadWeeks)}</td>
       {r.orders.map((o, i) => [
-        <td key={`d${i}`} style={{ ...styles.td, textAlign: 'center', color: !o.hasOrder ? '#bbb' : o.overdue ? '#c00' : dateColor(o.days), fontWeight: o.hasOrder && (o.overdue || o.days <= 30) ? 700 : 400 }}>
+        <td
+          key={`d${i}`}
+          style={{ ...styles.td, textAlign: 'center', color: !o.hasOrder ? '#bbb' : o.overdue ? '#c00' : dateColor(o.days), fontWeight: o.hasOrder && (o.overdue || o.days <= 30) ? 700 : 400 }}
+          title={o.isBlackoutAdjusted ? BLACKOUT_TOOLTIP : undefined}
+        >
           {!o.hasOrder ? '—' : o.overdue ? 'OVERDUE ⚠️' : formatDate(o.date)}
+          {o.isBlackoutAdjusted && (
+            <span style={styles.blackoutIcon} title={BLACKOUT_TOOLTIP}>⚠️</span>
+          )}
         </td>,
         <td key={`q${i}`} style={{ ...styles.td, textAlign: 'right', fontWeight: o.hasOrder ? 700 : 400 }}>
           {o.hasOrder ? fmt(o.qty) : '—'}
@@ -609,6 +752,16 @@ export default function OrderPlan() {
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
+
+      {blackout && (
+        <div style={styles.blackoutBanner}>
+          🇨🇳 <strong>China blackout active: {blackout.startLabel} to {blackout.endLabel}</strong>
+          {' (repeats every year)'} — orders to China suppliers are scheduled earlier
+          {blackoutAdjustedCount > 0
+            ? ` · ${blackoutAdjustedCount} order${blackoutAdjustedCount === 1 ? '' : 's'} moved in this plan`
+            : ' · no orders fall inside the window in this plan'}
+        </div>
+      )}
 
       {/* Barra de parámetros */}
       <div style={styles.paramsBar}>
@@ -755,6 +908,14 @@ export default function OrderPlan() {
                             <td style={{ ...styles.td, fontWeight: 600 }}>
                               {canExpand && <span style={{ ...styles.monthCaret, transform: isOpen ? 'rotate(90deg)' : 'none' }}>▶</span>}
                               {m.label}
+                              {m.blackoutCount > 0 && (
+                                <span
+                                  style={styles.monthWarn}
+                                  title={`${m.blackoutCount} order${m.blackoutCount === 1 ? '' : 's'} moved earlier — ${BLACKOUT_TOOLTIP}`}
+                                >
+                                  ⚠️ {m.blackoutCount}
+                                </span>
+                              )}
                             </td>
                             <td style={{ ...styles.td, textAlign: 'right' }}>{m.count > 0 ? fmt(m.count) : '—'}</td>
                             <td style={{ ...styles.td, textAlign: 'right' }}>{m.qty > 0 ? fmt(m.qty) : '—'}</td>
@@ -780,7 +941,12 @@ export default function OrderPlan() {
                                       <tr key={it.sku} style={styles.subTr}>
                                         <td style={{ ...styles.subTd, fontFamily: 'monospace', fontSize: 12 }}>{it.sku}</td>
                                         <td style={styles.subTd}>{it.name}</td>
-                                        <td style={styles.subTd}><span style={styles.supplierBadge}>{it.supplier}</span></td>
+                                        <td style={styles.subTd}>
+                                          <span style={styles.supplierBadge}>{it.supplier}</span>
+                                          {it.blackoutAdjusted && (
+                                            <span style={styles.blackoutIcon} title={BLACKOUT_TOOLTIP}>⚠️</span>
+                                          )}
+                                        </td>
                                         <td style={{ ...styles.subTd, textAlign: 'right', fontWeight: 700 }}>{fmt(it.qty)}</td>
                                         <td style={{ ...styles.subTd, textAlign: 'right' }}>{fmtCurrency(it.fobCost)}</td>
                                         <td style={{ ...styles.subTd, textAlign: 'right' }}>{fmtCurrency(it.totalFob)}</td>
@@ -974,6 +1140,9 @@ const styles = {
   monthlyWrap: { marginBottom: 24, background: '#fff', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', overflow: 'hidden' },
   monthlyHeader: { padding: '12px 16px', fontSize: 15, fontWeight: 700, color: '#1a1a2e', cursor: 'pointer', userSelect: 'none', borderBottom: '1px solid #eee' },
   monthlyHighlight: { background: '#fff7c2' },
+  blackoutBanner: { background: '#fff4e0', border: '1.5px solid #f0c078', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#7a4a10', marginBottom: 16, lineHeight: 1.5 },
+  blackoutIcon: { marginLeft: 5, fontSize: 11, cursor: 'help' },
+  monthWarn: { marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#a8620a', background: '#fff0d8', border: '1px solid #f0c078', borderRadius: 10, padding: '1px 7px', cursor: 'help' },
   monthlyTotalRow: { borderTop: '2px solid #1a1a2e', background: '#eef0f6' },
   monthCaret: { display: 'inline-block', width: 16, color: '#4455aa', fontSize: 10, transition: 'transform 0.15s' },
   subTableCell: { padding: '0 0 0 24px', background: '#fafbfd', borderBottom: '1px solid #e6e8ef' },

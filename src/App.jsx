@@ -12,6 +12,7 @@ import UploadData from './pages/UploadData'
 import ParamsView from './pages/ParamsView'
 import PurchaseOrders from './pages/PurchaseOrders'
 import ForecastHistory from './pages/ForecastHistory'
+import Admin from './pages/Admin'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -67,6 +68,7 @@ export default function App() {
       case 'params':   return <ParamsView />
       case 'orders':   return <PurchaseOrders />
       case 'history':  return <ForecastHistory />
+      case 'admin':    return <Admin />
       default:         return <Dashboard />
     }
   }
