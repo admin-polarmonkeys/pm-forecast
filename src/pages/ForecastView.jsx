@@ -17,6 +17,10 @@ import {
 const SUPPLIERS = ['All', 'SV', 'HAW', 'GUGU', 'HIM', 'TAR', 'DAR', 'WAT', 'WES', 'NING', 'UP', 'ALI', 'SIR', 'SC']
 
 // Filtros de SKU guardados por el usuario en localStorage. Formato: [{ name, skus: [] }]
+// El banner verde de "Guardado OK" se esconde solo después de esto.
+// El banner rojo de error NO se esconde nunca por tiempo.
+const SAVE_INFO_TIMEOUT_MS = 4000
+
 const SAVED_FILTERS_KEY = 'pm_forecast_filters'
 const MAX_SAVED_FILTERS = 10
 
@@ -288,6 +292,17 @@ export default function ForecastView() {
 
   // Al correr un forecast nuevo, volvemos a "todos seleccionados" y limpiamos el filtro activo
   useEffect(() => { setSelectedSkus(null); setActiveFilterName(null) }, [results])
+
+  // El aviso de guardado exitoso se esconde solo a los 4 segundos: confirma que se
+  // guardó y después deja de ocupar lugar. El banner de error no se toca acá —
+  // se limpia recién al arrancar la próxima corrida, en handleRunForecast.
+  useEffect(() => {
+    if (!saveInfo) return
+    const timer = setTimeout(() => setSaveInfo(null), SAVE_INFO_TIMEOUT_MS)
+    // Se cancela si llega un aviso nuevo antes de los 4 s o si se desmonta la página,
+    // así no queda un timer viejo apagando el aviso siguiente.
+    return () => clearTimeout(timer)
+  }, [saveInfo])
 
   async function loadData({ refresh = false } = {}) {
     // refresh: no usamos el loading de pantalla completa para no ocultar los resultados actuales
