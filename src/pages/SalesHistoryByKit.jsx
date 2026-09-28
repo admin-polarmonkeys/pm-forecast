@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 const NO_FAMILY = '(Sin familia)'
@@ -97,6 +98,20 @@ export default function SalesHistoryByKit() {
     return [...seen.values()].sort((a, b) => a.year - b.year || a.month - b.month)
   }, [sales, kitSkus])
 
+  // Anchos de columna. Tabla dinámica (una columna por mes): los defaults se
+  // recalculan cuando cambia `months`, así un mes nuevo entra con su ancho por
+  // defecto sin invalidar los anchos que el usuario ya ajustó.
+  const colDefaults = useMemo(() => {
+    const d = { sku: 130, name: 220 }
+    for (const m of months) d['m:' + m.key] = 74
+    d.avg = 90
+    return d
+  }, [months])
+  const cols = useColumnWidths('sales_by_kit', colDefaults)
+  const wSku = cols.widths.sku
+  const wName = cols.widths.name
+  const wAvg = cols.widths.avg
+
   // qtyMap[sku][year-month] = qty_fulfilled (solo kits)
   const qtyMap = useMemo(() => {
     const map = {}
@@ -193,6 +208,7 @@ export default function SalesHistoryByKit() {
           &nbsp;Only kits with at least one sale
         </label>
         <span style={styles.filterTotal}>{visibleFamilies.length} families visible</span>
+        <ResetWidthsButton resize={cols} />
       </div>
 
       {months.length === 0 ? (
@@ -204,17 +220,35 @@ export default function SalesHistoryByKit() {
         </div>
       ) : (
         <div style={styles.tableWrap}>
-          <table style={styles.table}>
+          <table style={{ ...styles.table, width: cols.totalWidth }}>
             <thead>
               <tr style={styles.thead}>
-                <th style={{ ...styles.th, ...styles.stickyCol, ...styles.stickyHead, textAlign: 'left' }}>Family / SKU</th>
-                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Name</th>
+                <ResizableTh
+                  colKey="sku"
+                  resize={cols}
+                  style={{ ...styles.th, ...styles.stickyHead, position: 'sticky', left: 0, textAlign: 'left' }}
+                >
+                  Family / SKU
+                </ResizableTh>
+                <ResizableTh
+                  colKey="name"
+                  resize={cols}
+                  style={{ ...styles.th, ...styles.stickyHead, position: 'sticky', left: wSku, textAlign: 'left' }}
+                >
+                  Name
+                </ResizableTh>
                 {months.map(m => (
-                  <th key={m.key} style={{ ...styles.th, textAlign: 'right' }}>
+                  <ResizableTh key={m.key} colKey={'m:' + m.key} resize={cols} style={{ ...styles.th, textAlign: 'right' }}>
                     {MONTH_ABBR[m.month - 1]} {String(m.year).slice(2)}
-                  </th>
+                  </ResizableTh>
                 ))}
-                <th style={{ ...styles.th, ...styles.stickyAvg, ...styles.stickyHead, textAlign: 'right' }}>Avg Sales</th>
+                <ResizableTh
+                  colKey="avg"
+                  resize={cols}
+                  style={{ ...styles.th, ...styles.stickyAvg, ...styles.stickyHead, textAlign: 'right' }}
+                >
+                  Avg Sales
+                </ResizableTh>
               </tr>
             </thead>
             <tbody>
@@ -226,7 +260,7 @@ export default function SalesHistoryByKit() {
                   <Fragment key={family.variant_group}>
                     {/* Fila de familia (suma) */}
                     <tr style={styles.familyRow} onClick={() => toggleFamily(family.variant_group)}>
-                      <td colSpan={2} style={{ ...styles.familyStickyCell }}>
+                      <td colSpan={2} style={{ ...styles.familyStickyCell, left: 0, width: wSku + wName, minWidth: wSku + wName, maxWidth: wSku + wName }}>
                         <span style={styles.expandIcon}>{isExpanded ? '▼' : '▶'}</span>
                         <strong>{family.variant_group}</strong>
                         <span style={styles.kitCount}>{family.kits.length} variants</span>
@@ -249,7 +283,7 @@ export default function SalesHistoryByKit() {
                           </td>
                         )
                       })}
-                      <td style={{ ...styles.td, ...styles.stickyAvg, ...styles.stickyAvgFamily }}>
+                      <td style={{ ...styles.td, ...styles.stickyAvg, ...styles.stickyAvgFamily, width: wAvg, minWidth: wAvg, maxWidth: wAvg }}>
                         {famAvg != null ? famAvg.toFixed(1) : '—'}
                       </td>
                     </tr>
@@ -261,8 +295,8 @@ export default function SalesHistoryByKit() {
                       const kitAvg = avgNonZero(cells)
                       return (
                         <tr key={kit.sku} style={styles.tr}>
-                          <td style={{ ...styles.td, ...styles.stickyCol, ...styles.kitSkuCell }}>{kit.sku}</td>
-                          <td style={{ ...styles.td, ...styles.stickyColName }}>{kit.name}</td>
+                          <td style={{ ...styles.td, ...styles.stickyCol, ...styles.kitSkuCell, left: 0, width: wSku, minWidth: wSku, maxWidth: wSku }}>{kit.sku}</td>
+                          <td style={{ ...styles.td, ...styles.stickyColName, left: wSku, width: wName, minWidth: wName, maxWidth: wName }}>{kit.name}</td>
                           {months.map(m => {
                             const v = cells[m.key]
                             const bg = cellColor(v, r.min, r.max)
@@ -281,7 +315,7 @@ export default function SalesHistoryByKit() {
                               </td>
                             )
                           })}
-                          <td style={{ ...styles.td, ...styles.stickyAvg, ...styles.stickyAvgKit }}>
+                          <td style={{ ...styles.td, ...styles.stickyAvg, ...styles.stickyAvgKit, width: wAvg, minWidth: wAvg, maxWidth: wAvg }}>
                             {kitAvg != null ? kitAvg.toFixed(1) : '—'}
                           </td>
                         </tr>
@@ -309,7 +343,7 @@ const styles = {
   checkLabel: { fontSize: 13, color: '#555', display: 'flex', alignItems: 'center', cursor: 'pointer' },
   filterTotal: { fontSize: 13, fontWeight: 700, color: '#1a1a2e', marginLeft: 'auto' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  table: { borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f0f0f0' },

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -122,6 +123,10 @@ function loadSavedFilters() {
 const BLACKOUT_TOOLTIP = 'Moved earlier due to China factory closure (Chinese New Year)'
 
 const DEFAULT_PARAMS = { coverageTarget: 3, orderFrequency: 2, planningHorizon: 12 }
+
+const MONTHLY_COL_WIDTHS = {
+  month: 130, sku_count: 130, total_qty: 110, total_fob: 120, total_landed: 130, skus: 420,
+}
 
 export default function OrderPlan() {
   const [data, setData] = useState(null)
@@ -572,6 +577,23 @@ export default function OrderPlan() {
     return cols
   }, [numOrders])
 
+  // Anchos de columna. La cantidad de columnas depende de numOrders, pero las claves
+  // (order_0_date, order_0_qty, …) son estables: si aparece una orden más, la columna
+  // nueva toma su ancho por defecto sin afectar a las demás.
+  const colDefaults = useMemo(() => {
+    const d = {}
+    for (const c of columns) {
+      d[c.key] = c.key === 'name' ? 220
+        : c.key === 'sku' ? 130
+        : c.key.endsWith('_date') ? 120
+        : c.num ? 110
+        : 110
+    }
+    return d
+  }, [columns])
+  const colWidths = useColumnWidths('order_plan', colDefaults)
+  const monthlyCols = useColumnWidths('order_plan_monthly', MONTHLY_COL_WIDTHS)
+
   function exportToExcel() {
     const wb = XLSX.utils.book_new()
     const headerStyle = {
@@ -746,7 +768,10 @@ export default function OrderPlan() {
             {groupBySupplier ? '✓ ' : ''}Group by Supplier
           </button>
           {plan.length > 0 && (
-            <button style={styles.exportBtn} onClick={exportToExcel}>⬇ Export to Excel</button>
+            <>
+              <button style={styles.exportBtn} onClick={exportToExcel}>⬇ Export to Excel</button>
+              <ResetWidthsButton resize={colWidths} />
+            </>
           )}
         </div>
       </div>
@@ -881,18 +906,21 @@ export default function OrderPlan() {
           <div style={styles.monthlyWrap}>
             <div style={styles.monthlyHeader} onClick={() => setMonthlyOpen(o => !o)}>
               <span>Monthly Summary {monthlyOpen ? '▼' : '►'}</span>
+              <span onClick={e => e.stopPropagation()}>
+                <ResetWidthsButton resize={monthlyCols} label="↔ Reset widths" />
+              </span>
             </div>
             {monthlyOpen && (
               <div style={styles.tableWrap}>
-                <table style={styles.table}>
+                <table style={{ ...styles.table, minWidth: monthlyCols.totalWidth, width: '100%' }}>
                   <thead>
                     <tr style={styles.thead}>
-                      <th style={{ ...styles.th, textAlign: 'left' }}>Month</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}># SKUs to Order</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Total Qty</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Total FOB</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
-                      <th style={{ ...styles.th, textAlign: 'left' }}>SKUs</th>
+                      <ResizableTh colKey="month" resize={monthlyCols} style={{ ...styles.th, textAlign: 'left' }}>Month</ResizableTh>
+                      <ResizableTh colKey="sku_count" resize={monthlyCols} style={{ ...styles.th, textAlign: 'right' }}># SKUs to Order</ResizableTh>
+                      <ResizableTh colKey="total_qty" resize={monthlyCols} style={{ ...styles.th, textAlign: 'right' }}>Total Qty</ResizableTh>
+                      <ResizableTh colKey="total_fob" resize={monthlyCols} style={{ ...styles.th, textAlign: 'right' }}>Total FOB</ResizableTh>
+                      <ResizableTh colKey="total_landed" resize={monthlyCols} style={{ ...styles.th, textAlign: 'right' }}>Total Landed</ResizableTh>
+                      <ResizableTh colKey="skus" resize={monthlyCols} style={{ ...styles.th, textAlign: 'left' }}>SKUs</ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
@@ -996,18 +1024,20 @@ export default function OrderPlan() {
           </div>
 
           <div style={styles.tableWrap}>
-            <table style={styles.table}>
+            <table style={{ ...styles.table, minWidth: colWidths.totalWidth, width: '100%' }}>
               <thead>
                 <tr style={styles.thead}>
                   {columns.map(col => (
-                    <th
+                    <ResizableTh
                       key={col.key}
+                      colKey={col.key}
+                      resize={colWidths}
                       style={{ ...styles.th, textAlign: col.num ? 'right' : 'left', cursor: 'pointer', userSelect: 'none' }}
                       onClick={() => handleSort(col.key)}
                     >
                       {col.label}
                       {sortKey === col.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-                    </th>
+                    </ResizableTh>
                   ))}
                 </tr>
                 {/* Fila de autofiltros */}
@@ -1151,7 +1181,7 @@ const styles = {
   subTr: { borderBottom: '1px solid #eef0f4' },
   subTd: { padding: '7px 12px', color: '#333', fontSize: 12, whiteSpace: 'nowrap' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  table: { borderCollapse: 'collapse', background: '#fff', fontSize: 13, whiteSpace: 'nowrap' },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13, whiteSpace: 'nowrap' },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   filterRow: { background: '#f3f4f8' },

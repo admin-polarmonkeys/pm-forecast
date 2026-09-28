@@ -1,8 +1,18 @@
 import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 // Columnas de la tabla (mismas que se exportan a Excel)
+const DEFAULT_COL_WIDTHS = {
+  sku: 130,
+  name: 240,
+  supplier: 110,
+  qty_available_real: 110,
+  landed_cost_usd: 120,
+  total_landed: 150,
+}
+
 const COLUMNS = [
   { key: 'sku', label: 'SKU', align: 'left' },
   { key: 'name', label: 'Name', align: 'left' },
@@ -30,6 +40,7 @@ function valueColor(v) {
 }
 
 export default function InventoryValue() {
+  const colWidths = useColumnWidths('inventory_value', DEFAULT_COL_WIDTHS)
   const [rows, setRows] = useState([])
   const [snapshotDate, setSnapshotDate] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -271,21 +282,24 @@ export default function InventoryValue() {
               {suppliers.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
             <span style={styles.filterTotal}>{fmtCurrency(totalValue)} filtered total</span>
+            <ResetWidthsButton resize={colWidths} />
           </div>
 
           <div style={styles.tableWrap}>
-            <table style={styles.table}>
+            <table style={{ ...styles.table, minWidth: colWidths.totalWidth, width: '100%' }}>
               <thead>
                 <tr style={styles.thead}>
                   {COLUMNS.map(col => (
-                    <th
+                    <ResizableTh
                       key={col.key}
+                      colKey={col.key}
+                      resize={colWidths}
                       style={{ ...styles.th, textAlign: col.align, cursor: 'pointer', userSelect: 'none' }}
                       onClick={() => handleSort(col.key)}
                     >
                       {col.label}
                       {sortKey === col.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-                    </th>
+                    </ResizableTh>
                   ))}
                 </tr>
               </thead>
@@ -343,7 +357,7 @@ const styles = {
   searchInput: { padding: '8px 14px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, width: 240 },
   filterTotal: { fontSize: 13, fontWeight: 700, color: '#1a1a2e', marginLeft: 'auto' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  table: { width: '100%', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f0f0f0' },

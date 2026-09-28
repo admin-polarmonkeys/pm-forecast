@@ -59,9 +59,21 @@ CREATE TABLE IF NOT EXISTS purchase_params (
   moq INT NOT NULL DEFAULT 1,
   supplier TEXT,
   landed_cost_usd NUMERIC,
+  -- Ventana de meses para el promedio de ventas de ESTE SKU.
+  -- NULL = usar el default global de app_settings('avg_sales_months').
+  avg_sales_months INT,
+  -- Recorte de extremos de ESTE SKU: 0 = no recortar, 1 = quitar el mes más alto y el más bajo.
+  -- NULL = usar el default global de app_settings('trim_extremes').
+  -- OJO: 0 NO es lo mismo que NULL. El 0 es una decisión explícita de no recortar este SKU
+  -- y le gana al global; NULL significa "seguí la cadena hacia el global".
+  trim_extremes INT,
   notes TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migración para bases ya creadas
+ALTER TABLE purchase_params ADD COLUMN IF NOT EXISTS avg_sales_months INT;
+ALTER TABLE purchase_params ADD COLUMN IF NOT EXISTS trim_extremes INT;
 
 -- 6. FORECAST_RUNS — cada vez que corres el análisis
 CREATE TABLE IF NOT EXISTS forecast_runs (
@@ -69,10 +81,20 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
   run_date DATE NOT NULL DEFAULT CURRENT_DATE,
   snapshot_date DATE NOT NULL,
   months_history INT NOT NULL DEFAULT 6,
+  -- Ventana GLOBAL del promedio de ventas usada en esta corrida.
+  -- Los SKUs con purchase_params.avg_sales_months propio no usaron este valor.
+  avg_sales_months INT,
+  -- Recorte GLOBAL de extremos usado en esta corrida (0/1).
+  -- Los SKUs con purchase_params.trim_extremes propio no usaron este valor.
+  trim_extremes INT,
   notes TEXT,
   created_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migración para bases ya creadas
+ALTER TABLE forecast_runs ADD COLUMN IF NOT EXISTS avg_sales_months INT;
+ALTER TABLE forecast_runs ADD COLUMN IF NOT EXISTS trim_extremes INT;
 
 -- 7. PURCHASE_ORDERS — output calculado por run
 CREATE TABLE IF NOT EXISTS purchase_orders (
@@ -139,6 +161,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ventana global (en meses) del promedio de ventas. Default 12.
+-- Precedencia: purchase_params.avg_sales_months > este valor > 12 (hardcodeado en forecast.js).
+INSERT INTO app_settings (key, value)
+VALUES ('avg_sales_months', '12')
+ON CONFLICT (key) DO NOTHING;
+
+-- Recorte global de extremos: 0 = sin recorte, 1 = quitar el mes más alto y el más bajo.
+-- Precedencia: purchase_params.trim_extremes > este valor > 0 (hardcodeado en forecast.js).
+-- Regla de piso: si después de recortar quedarían menos de 3 meses, no se recorta
+-- (es decir, con una ventana de 4 meses o menos nunca se aplica).
+INSERT INTO app_settings (key, value)
+VALUES ('trim_extremes', '0')
+ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
 -- ROW LEVEL SECURITY — solo usuarios autenticados

@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { calcAvgMonthlySales } from '../lib/forecast'
+import {
+  calcAvgMonthlySales,
+  buildSalesIndex,
+  resolveAvgSalesMonths,
+  resolveTrimExtremes,
+  AVG_SALES_MONTHS_KEY,
+  TRIM_EXTREMES_KEY,
+} from '../lib/forecast'
 
 function fmt(n) {
   if (n == null || isNaN(n)) return '—'
@@ -34,13 +41,14 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
     try {
-      const [products, inv, sales, transit, params, runs] = await Promise.all([
+      const [products, inv, sales, transit, params, runs, settings] = await Promise.all([
         supabase.from('products').select('sku, name, type'),
         supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
         supabase.from('sales_history').select('sku, year, month, qty_fulfilled, created_at'),
         supabase.from('transit_orders').select('sku, qty'),
-        supabase.from('purchase_params').select('sku, supplier'),
+        supabase.from('purchase_params').select('sku, supplier, avg_sales_months, trim_extremes'),
         supabase.from('forecast_runs').select('id, run_date, created_at').order('created_at', { ascending: false }).limit(1),
+        supabase.from('app_settings').select('key, value').in('key', [AVG_SALES_MONTHS_KEY, TRIM_EXTREMES_KEY]),
       ])
       if (inv.error) throw inv.error
       if (sales.error) throw sales.error
@@ -76,8 +84,27 @@ export default function Dashboard() {
         ...Object.keys(transitBySku),
       ].filter(sku => componentSkus.has(sku)))
 
+      const settingsByKey = Object.fromEntries((settings.data || []).map(x => [x.key, x.value]))
+      const globalAvgMonths = settingsByKey[AVG_SALES_MONTHS_KEY] ?? null
+      const globalTrim = settingsByKey[TRIM_EXTREMES_KEY] ?? null
+      // Índice de ventas construido una sola vez y reusado por todos los SKUs
+      const salesIndex = buildSalesIndex(salesData)
+      const avgMonthsBySku = {}
+      const trimBySku = {}
+      for (const r of params.data || []) {
+        avgMonthsBySku[r.sku] = r.avg_sales_months
+        trimBySku[r.sku] = r.trim_extremes
+      }
+
       const computed = [...universe].map(sku => {
-        const avg = calcAvgMonthlySales(salesData, sku, 6) // solo ventas directas, últimos 6 meses
+        // Solo ventas directas (sin explotar BOM), con la misma ventana y el mismo
+        // recorte configurables que usa el forecast: override del SKU > global > default.
+        const avg = calcAvgMonthlySales(
+          salesIndex,
+          sku,
+          resolveAvgSalesMonths({ skuOverride: avgMonthsBySku[sku], globalSetting: globalAvgMonths }),
+          resolveTrimExtremes({ skuOverride: trimBySku[sku], globalSetting: globalTrim })
+        )
         const available = availBySku[sku] || 0
         const qtyTransit = effTransit(sku)
         const monthsCoverage = avg > 0 ? (available + qtyTransit) / avg : null

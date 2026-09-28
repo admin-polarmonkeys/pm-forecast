@@ -1,11 +1,17 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 // Claves con las que se guarda el blackout de China en app_settings
 const BLACKOUT_START_KEY = 'china_blackout_start'
 const BLACKOUT_END_KEY = 'china_blackout_end'
 
+const SUPPLIER_COL_WIDTHS = { code: 140, name: 240, is_china: 110, products: 120, actions: 130 }
+const ASSIGN_COL_WIDTHS = { sku: 150, name: 280, supplier: 160 }
+
 export default function Admin() {
+  const supplierCols = useColumnWidths('suppliers', SUPPLIER_COL_WIDTHS)
+  const assignCols = useColumnWidths('supplier_assign', ASSIGN_COL_WIDTHS)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [flash, setFlash] = useState(null) // { type: 'ok' | 'err', msg }
@@ -277,21 +283,24 @@ export default function Admin() {
 
       {/* ===================== SECCIÓN 1 ===================== */}
       <div style={styles.card}>
-        <h2 style={styles.cardTitle}>🏭 Supplier Management</h2>
+        <div style={styles.cardTitleRow}>
+          <h2 style={styles.cardTitle}>🏭 Supplier Management</h2>
+          <ResetWidthsButton resize={supplierCols} />
+        </div>
         <p style={styles.cardDesc}>
           Suppliers already used in Parameters are listed automatically. Marking one as China
           flags it for the blackout rule below. Changes to the checkbox and the name save immediately.
         </p>
 
         <div style={styles.tableWrap}>
-          <table style={styles.table}>
+          <table style={{ ...styles.table, minWidth: supplierCols.totalWidth, width: '100%' }}>
             <thead style={styles.thead}>
               <tr>
-                <th style={styles.th}>Supplier Code</th>
-                <th style={styles.th}>Name</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Is China?</th>
-                <th style={{ ...styles.th, textAlign: 'right' }}># Products</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Actions</th>
+                <ResizableTh colKey="code" resize={supplierCols} style={styles.th}>Supplier Code</ResizableTh>
+                <ResizableTh colKey="name" resize={supplierCols} style={styles.th}>Name</ResizableTh>
+                <ResizableTh colKey="is_china" resize={supplierCols} style={{ ...styles.th, textAlign: 'center' }}>Is China?</ResizableTh>
+                <ResizableTh colKey="products" resize={supplierCols} style={{ ...styles.th, textAlign: 'right' }}># Products</ResizableTh>
+                <ResizableTh colKey="actions" resize={supplierCols} style={{ ...styles.th, textAlign: 'center' }}>Actions</ResizableTh>
               </tr>
             </thead>
             <tbody>
@@ -385,7 +394,10 @@ export default function Admin() {
 
       {/* ===================== SECCIÓN 2 ===================== */}
       <div style={styles.card}>
-        <h2 style={styles.cardTitle}>🔗 Product-Supplier Assignment</h2>
+        <div style={styles.cardTitleRow}>
+          <h2 style={styles.cardTitle}>🔗 Product-Supplier Assignment</h2>
+          <ResetWidthsButton resize={assignCols} />
+        </div>
         <p style={styles.cardDesc}>
           Assign each component to a supplier. Changes save immediately to Parameters
           and apply to the next forecast run.
@@ -405,12 +417,12 @@ export default function Admin() {
         </div>
 
         <div style={{ ...styles.tableWrap, maxHeight: 460, overflowY: 'auto' }}>
-          <table style={styles.table}>
+          <table style={{ ...styles.table, minWidth: assignCols.totalWidth, width: '100%' }}>
             <thead style={styles.thead}>
               <tr>
-                <th style={{ ...styles.th, ...styles.thSticky }}>SKU</th>
-                <th style={{ ...styles.th, ...styles.thSticky }}>Name</th>
-                <th style={{ ...styles.th, ...styles.thSticky }}>Supplier</th>
+                <ResizableTh colKey="sku" resize={assignCols} style={{ ...styles.th, ...styles.thSticky }}>SKU</ResizableTh>
+                <ResizableTh colKey="name" resize={assignCols} style={{ ...styles.th, ...styles.thSticky }}>Name</ResizableTh>
+                <ResizableTh colKey="supplier" resize={assignCols} style={{ ...styles.th, ...styles.thSticky }}>Supplier</ResizableTh>
               </tr>
             </thead>
             <tbody>
@@ -510,7 +522,7 @@ const styles = {
   cardTitle: { fontSize: 17, fontWeight: 700, color: '#1a1a2e', marginBottom: 4 },
   cardDesc: { fontSize: 13, color: '#666', marginBottom: 16, lineHeight: 1.5 },
   tableWrap: { overflowX: 'auto', borderRadius: 10, border: '1px solid #eee' },
-  table: { width: '100%', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   thSticky: { position: 'sticky', top: 0, background: '#1a1a2e', zIndex: 1 },
@@ -529,6 +541,7 @@ const styles = {
   input: { padding: '7px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, minWidth: 180 },
   primaryBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   filters: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 },
+  cardTitleRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   searchInput: { padding: '8px 14px', border: '1.5px solid #e0e0e0', borderRadius: 8, fontSize: 13, width: 280 },
   count: { fontSize: 12, color: '#888' },
   select: { padding: '5px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, background: '#fff', minWidth: 170 },

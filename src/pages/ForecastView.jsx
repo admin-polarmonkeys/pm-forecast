@@ -1,7 +1,18 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
-import { runForecast } from '../lib/forecast'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
+import {
+  runForecast,
+  calcTotalComponentDemand,
+  resolveAvgSalesMonths,
+  resolveTrimExtremes,
+  AVG_SALES_MONTHS_KEY,
+  DEFAULT_AVG_SALES_MONTHS,
+  TRIM_EXTREMES_KEY,
+  DEFAULT_TRIM_EXTREMES,
+  TRIM_MIN_KEPT_MONTHS,
+} from '../lib/forecast'
 
 const SUPPLIERS = ['All', 'SV', 'HAW', 'GUGU', 'HIM', 'TAR', 'DAR', 'WAT', 'WES', 'NING', 'UP', 'ALI', 'SIR', 'SC']
 
@@ -64,7 +75,19 @@ const DEFAULT_COL_WIDTHS = {
   order_by_days: 130,
   total_landed_cost: 120,
 }
-const MIN_COL_WIDTH = 60
+
+// Arma el texto COMPLETO del error que devuelve Supabase.
+// PostgREST manda message + code + details + hint por separado; mostrar solo
+// `message` esconde justo la parte que dice qué columna o constraint falló.
+function dbErrorText(prefix, err) {
+  if (!err) return prefix
+  const lines = [prefix]
+  if (err.message) lines.push(`message: ${err.message}`)
+  if (err.code) lines.push(`code: ${err.code}`)
+  if (err.details) lines.push(`details: ${err.details}`)
+  if (err.hint) lines.push(`hint: ${err.hint}`)
+  return lines.join('\n')
+}
 
 function fmt(n) {
   if (n == null) return '—'
@@ -142,6 +165,62 @@ function orderByInfo(r) {
   return { text: formatOrderDate(d), color, bold, days: Math.round(daysUntil) }
 }
 
+// Explica en una frase qué pasó con el recorte en esta serie. Cuando NO se recortó,
+// dice por qué: apagado en la config, o la regla de piso lo impidió.
+function trimStatusText(detail) {
+  if (!detail) return ''
+  if (detail.trim_applied) {
+    return `Recorte aplicado: se descartaron el mes más alto y el más bajo. El promedio divide por los ${detail.kept_count} meses que quedaron, no por ${detail.months_used}.`
+  }
+  if (detail.trim_skipped_reason === 'config') {
+    return `Sin recorte: está apagado en la configuración (Trim = 0). Entran los ${detail.months_used} meses de la ventana.`
+  }
+  if (detail.trim_skipped_reason === 'floor') {
+    return `Sin recorte aunque se pidió: con una ventana de ${detail.months_used} meses quedarían ${detail.months_used - 2}, menos del mínimo de ${TRIM_MIN_KEPT_MONTHS}. Por la regla de piso no se recorta y entran los ${detail.months_used} meses.`
+  }
+  if (detail.trim_skipped_reason === 'no_data') {
+    return 'Sin recorte: no hay ningún registro de ventas en la base, así que no hay serie para recortar.'
+  }
+  return ''
+}
+
+// Serie mensual de la ventana. Los meses recortados se muestran tachados y en gris,
+// con la marca de si fueron el extremo alto o bajo. Debajo, la cuenta que da el promedio.
+function MonthStrip({ detail }) {
+  if (!detail || !detail.series || detail.series.length === 0) {
+    return <div style={styles.stripEmpty}>Sin serie mensual: no hay registros de ventas.</div>
+  }
+  return (
+    <>
+      <div style={styles.strip}>
+        {detail.series.map(mo => {
+          const out = mo.trimmed !== null
+          const label = `${MONTHS_ES[mo.month - 1]} ${String(mo.year).slice(2)}`
+          return (
+            <div
+              key={mo.period}
+              style={{ ...styles.stripCell, ...(out ? styles.stripCellOut : null) }}
+              title={out
+                ? `${label}: ${mo.qty} unidades — RECORTADO (${mo.trimmed === 'high' ? 'mes más alto' : 'mes más bajo'})`
+                : `${label}: ${mo.qty} unidades — entra al promedio`}
+            >
+              <div style={styles.stripMonth}>{label}</div>
+              <div style={{ ...styles.stripQty, ...(out ? styles.stripQtyOut : null) }}>{mo.qty}</div>
+              <div style={styles.stripMark}>
+                {mo.trimmed === 'high' ? '▲ alto' : mo.trimmed === 'low' ? '▼ bajo' : ''}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div style={styles.stripMath}>
+        {fmt(detail.kept_total)} ÷ {detail.kept_count} {detail.kept_count === 1 ? 'mes' : 'meses'}
+        {' = '}<strong>{fmt(detail.avg)}</strong>
+      </div>
+    </>
+  )
+}
+
 export default function ForecastView() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -149,7 +228,38 @@ export default function ForecastView() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState(null)
   const [results, setResults] = useState([])
-  const [monthsBack, setMonthsBack] = useState(6)
+  // Ventana global del promedio de ventas. Arranca con el valor guardado en
+  // app_settings (editable en Parameters) y se puede pisar acá solo para esta sesión,
+  // igual que el "Quick adjust" de los otros parámetros: no se guarda en Supabase.
+  // Un override por SKU en purchase_params.avg_sales_months siempre tiene prioridad.
+  const [avgMonthsGlobal, setAvgMonthsGlobal] = useState(DEFAULT_AVG_SALES_MONTHS)
+  const [avgMonthsSaved, setAvgMonthsSaved] = useState(DEFAULT_AVG_SALES_MONTHS)
+  // SKU cuyo desglose de Avg Sales/Mo está abierto en el panel lateral (null = cerrado)
+  const [breakdownSku, setBreakdownSku] = useState(null)
+  // Resultado del guardado en la base: confirma cuántas filas escribió, o queda null
+  const [saveInfo, setSaveInfo] = useState(null)
+  // Aviso no bloqueante de la carga (p. ej. app_settings ilegible -> ventana por default)
+  const [dataWarning, setDataWarning] = useState(null)
+  // Recorte de extremos global, con la misma mecánica que la ventana: arranca del
+  // valor guardado y se puede pisar solo para esta sesión.
+  const [trimGlobal, setTrimGlobal] = useState(DEFAULT_TRIM_EXTREMES)
+  const [trimSaved, setTrimSaved] = useState(DEFAULT_TRIM_EXTREMES)
+  // Kit cuya serie mensual está expandida dentro del panel de desglose
+  const [expandedKit, setExpandedKit] = useState(null)
+
+  // Ventana global efectiva: reusa la misma cadena de resolución del motor.
+  // Si el input del header quedó vacío cae al valor guardado, y si ese tampoco
+  // existe, al default (12). Nunca devuelve '' ni NaN, que romperían el INSERT
+  // en forecast_runs (columnas INT).
+  const effectiveAvgMonths = resolveAvgSalesMonths({
+    skuOverride: avgMonthsGlobal,
+    globalSetting: avgMonthsSaved,
+  })
+  // Mismo patrón para el recorte: lo elegido en el header > lo guardado > 0
+  const effectiveTrim = resolveTrimExtremes({
+    skuOverride: trimGlobal,
+    globalSetting: trimSaved,
+  })
   const [filterSupplier, setFilterSupplier] = useState('All')
   const [filterOnlyOrders, setFilterOnlyOrders] = useState(false)
   const [search, setSearch] = useState('')
@@ -170,8 +280,9 @@ export default function ForecastView() {
   const [quickGrowth, setQuickGrowth] = useState('1.40')
   const [quickLeadTime, setQuickLeadTime] = useState('')
   const [quickCoverage, setQuickCoverage] = useState('')
-  const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS)
-  const [hoverHandle, setHoverHandle] = useState(null)
+  // Anchos de columna: estado + persistencia + reset, compartido con el resto de las tablas
+  const cols = useColumnWidths('forecast', DEFAULT_COL_WIDTHS)
+  const colWidths = cols.widths
 
   useEffect(() => { loadData() }, [])
 
@@ -181,8 +292,10 @@ export default function ForecastView() {
   async function loadData({ refresh = false } = {}) {
     // refresh: no usamos el loading de pantalla completa para no ocultar los resultados actuales
     refresh ? setRefreshing(true) : setLoading(true)
+    setError(null)
+    setDataWarning(null)
     try {
-      const [products, bom, sales, inventory, params, transit, latestRun] = await Promise.all([
+      const [products, bom, sales, inventory, params, transit, latestRun, settings] = await Promise.all([
         supabase.from('products').select('*'),
         supabase.from('bom').select('*'),
         supabase.from('sales_history').select('*'),
@@ -190,10 +303,50 @@ export default function ForecastView() {
         supabase.from('purchase_params').select('*'),
         supabase.from('transit_orders').select('sku, qty'),
         supabase.from('forecast_runs').select('id').order('created_at', { ascending: false }).limit(1),
+        supabase.from('app_settings').select('key, value').in('key', [AVG_SALES_MONTHS_KEY, TRIM_EXTREMES_KEY]),
       ])
 
-      if (products.error) throw products.error
-      if (bom.error) throw bom.error
+      // Todas estas consultas alimentan números que se usan para decidir compras.
+      // Un error silencioso acá produce un forecast que PARECE válido y no lo es:
+      // sin sales_history la demanda da 0, sin inventory el stock da 0 y se sobre-ordena.
+      // Por eso cortan la carga en vez de seguir con datos incompletos.
+      for (const [label, res] of [
+        ['products', products],
+        ['bom', bom],
+        ['sales_history', sales],
+        ['inventory_snapshots', inventory],
+        ['purchase_params', params],
+        ['transit_orders', transit],
+        ['forecast_runs', latestRun],
+      ]) {
+        if (res.error) {
+          console.error(`[${label}]`, res.error)
+          throw new Error(dbErrorText(`Falló la consulta a ${label}. No se cargaron los datos.`, res.error))
+        }
+      }
+
+      // app_settings es tabla nueva (ver supabase/admin_setup.sql) y puede no existir todavía,
+      // así que su error NO corta la carga — pero sí se avisa, porque sin ese valor la ventana
+      // del promedio cae al default en vez de ser la que está guardada en Parameters.
+      if (settings.error) {
+        console.error('[app_settings]', settings.error)
+        setDataWarning(dbErrorText(
+          `No se pudo leer app_settings: la ventana del promedio cae al default de ${DEFAULT_AVG_SALES_MONTHS} meses ` +
+          `y el recorte de extremos a ${DEFAULT_TRIM_EXTREMES}, que pueden no ser los que configuraste en Parameters. ` +
+          'Verificá los valores del header antes de correr.',
+          settings.error
+        ))
+      }
+
+      // Valores globales desde app_settings. Si una key no existe todavía, cae a su default.
+      // En un refresh reseteamos los overrides de sesión: el usuario pidió los datos guardados.
+      const settingsByKey = Object.fromEntries((settings.data || []).map(x => [x.key, x.value]))
+      const storedMonths = resolveAvgSalesMonths({ globalSetting: settingsByKey[AVG_SALES_MONTHS_KEY] })
+      setAvgMonthsSaved(storedMonths)
+      setAvgMonthsGlobal(storedMonths)
+      const storedTrim = resolveTrimExtremes({ globalSetting: settingsByKey[TRIM_EXTREMES_KEY] })
+      setTrimSaved(storedTrim)
+      setTrimGlobal(storedTrim)
 
       // Get latest snapshot date
       const latestDate = inventory.data?.[0]?.snapshot_date || null
@@ -210,12 +363,26 @@ export default function ForecastView() {
       const lastRunId = latestRun.data?.[0]?.id || null
       let confirmedTransit = []
       if (lastRunId) {
-        const { data: confirmedOrders } = await supabase
+        const { data: confirmedOrders, error: confirmedErr } = await supabase
           .from('purchase_orders')
           .select('sku, confirmed_qty')
           .eq('run_id', lastRunId)
           .eq('order_status', 'ordenado')
           .gt('confirmed_qty', 0)
+
+        // Esta consulta alimenta la columna In Transit. Si falla en silencio, el tránsito
+        // queda SUBESTIMADO (faltan las órdenes ya confirmadas), el stock actual se ve más
+        // bajo de lo real y la orden sugerida sale INFLADA: se vuelve a pedir algo que ya
+        // está pedido. Por eso corta la carga en vez de mostrar un número equivocado.
+        if (confirmedErr) {
+          console.error('[purchase_orders confirmadas -> In Transit]', confirmedErr)
+          throw new Error(dbErrorText(
+            'Falló la consulta de órdenes confirmadas, que alimenta la columna In Transit. ' +
+            'No se cargaron los datos para no calcular con un tránsito incompleto: eso subestima ' +
+            'el tránsito e infla la orden sugerida, llevando a pedir de más algo ya ordenado.',
+            confirmedErr
+          ))
+        }
         // GROUP BY sku: sumamos confirmed_qty por SKU del lado del cliente
         const sumBySku = {}
         for (const o of (confirmedOrders || [])) {
@@ -245,21 +412,46 @@ export default function ForecastView() {
   async function handleRunForecast() {
     if (!data) return
     setRunning(true)
+    setError(null)
+    setSaveInfo(null)
     try {
-      const forecast = runForecast({ ...data, monthsBack })
+      const forecast = runForecast({
+        ...data,
+        avgSalesMonthsGlobal: effectiveAvgMonths,
+        trimExtremesGlobal: effectiveTrim,
+      })
+
+      // El cálculo se muestra siempre, incluso si después falla el guardado.
+      // Antes esto se hacía al final, así que un guardado fallido no se distinguía
+      // de uno exitoso: la tabla se llenaba igual.
+      setResults(forecast)
 
       // Save run to DB
       const { data: run, error: runErr } = await supabase
         .from('forecast_runs')
         .insert({
           snapshot_date: snapshotDate || new Date().toISOString().split('T')[0],
-          months_history: monthsBack,
+          // months_history queda por compatibilidad: ForecastHistory y PurchaseOrders
+          // todavía leen esa columna. avg_sales_months es la ventana global real usada.
+          months_history: effectiveAvgMonths,
+          avg_sales_months: effectiveAvgMonths,
+          trim_extremes: effectiveTrim,
           notes: `Run manual ${new Date().toLocaleDateString()}`,
         })
         .select()
         .single()
 
-      if (!runErr && run) {
+      if (runErr || !run) {
+        // Antes este caso caía en un `if (!runErr && run)` que salteaba todo sin avisar
+        console.error('[forecast_runs insert]', runErr)
+        setError(dbErrorText(
+          'El forecast se calculó y se muestra abajo, pero NO se guardó nada: falló el insert en forecast_runs.',
+          runErr
+        ))
+        return
+      }
+
+      {
         // fob_cost_usd no viene en los resultados del forecast; lo tomamos de purchase_params
         const paramsBySku = {}
         for (const p of (data.purchaseParams || [])) paramsBySku[p.sku] = p
@@ -295,16 +487,50 @@ export default function ForecastView() {
             }
           })
 
-        if (orders.length > 0) {
-          await supabase.from('purchase_orders').insert(orders)
-        }
-      }
+        const runTag = String(run.id).slice(0, 8)
 
-      setResults(forecast)
+        if (orders.length === 0) {
+          setSaveInfo(`Run ${runTag}… guardado. Ningún SKU necesita orden, así que no había filas para guardar en purchase_orders.`)
+          return
+        }
+
+        // .select('id') devuelve las filas realmente escritas: así el conteo lo
+        // confirma la base, no la suposición de que el insert anduvo.
+        const { data: inserted, error: ordersErr } = await supabase
+          .from('purchase_orders')
+          .insert(orders)
+          .select('id')
+
+        if (ordersErr) {
+          // Logueamos también la primera fila del payload: sirve para ver qué se mandó
+          console.error('[purchase_orders insert]', ordersErr, 'primera fila del payload:', orders[0])
+          setError(dbErrorText(
+            `El run ${runTag}… se guardó, pero las ${orders.length} filas de purchase_orders NO. ` +
+            'Lo que ves en la tabla es solo el cálculo en memoria.',
+            ordersErr
+          ))
+          return
+        }
+
+        const savedCount = inserted?.length ?? 0
+        if (savedCount !== orders.length) {
+          console.error('[purchase_orders insert] guardado parcial', { enviadas: orders.length, confirmadas: savedCount })
+          setError(
+            `Guardado parcial en purchase_orders: se enviaron ${orders.length} filas y la base confirmó ${savedCount}. ` +
+            `Run ${runTag}…`
+          )
+          return
+        }
+
+        setSaveInfo(`Guardado OK: run ${runTag}… con ${savedCount} SKUs en purchase_orders.`)
+      }
     } catch (err) {
-      setError(err.message)
+      console.error('[handleRunForecast]', err)
+      setError(dbErrorText('Error corriendo el forecast.', err))
+    } finally {
+      // finally: los return tempranos de arriba no deben dejar el botón trabado
+      setRunning(false)
     }
-    setRunning(false)
   }
 
   // Ajuste rápido (what-if): pisa growth/lead time/coverage de TODOS los SKUs en el estado local
@@ -325,7 +551,11 @@ export default function ForecastView() {
 
     const updatedData = { ...data, purchaseParams: updatedParams }
     setData(updatedData)
-    setResults(runForecast({ ...updatedData, monthsBack }))
+    setResults(runForecast({
+      ...updatedData,
+      avgSalesMonthsGlobal: effectiveAvgMonths,
+      trimExtremesGlobal: effectiveTrim,
+    }))
   }
 
   // Agrega campos calculados: days_of_inventory y la info de "Pedir Antes De"
@@ -343,6 +573,60 @@ export default function ForecastView() {
     }),
     [results]
   )
+
+  // sku -> nombre, para etiquetar kits al recalcular el desglose
+  const nameBySku = useMemo(() => {
+    const m = {}
+    for (const p of (data?.products || [])) m[p.sku] = p.name
+    return m
+  }, [data])
+
+  // Desglose del Avg Sales/Mo del SKU abierto en el panel.
+  //
+  // Mostramos el desglose GUARDADO en el resultado del forecast (`avg_sales_breakdown`),
+  // que salió del mismo cálculo que el número de la tabla, así que cierra por construcción.
+  // Además recalculamos con el BOM actual de `data`: si no coincide, el BOM (o las ventas)
+  // cambiaron en la base después de correr el forecast y avisamos.
+  const breakdown = useMemo(() => {
+    if (!breakdownSku || !data) return null
+    const row = enriched.find(r => r.sku === breakdownSku)
+    if (!row) return null
+
+    const stored = row.avg_sales_breakdown
+    if (!stored) return null
+
+    // ¿Cierra el desglose contra el total? (tolerancia por punto flotante)
+    const kitsSum = stored.kit_lines.reduce((sum, l) => sum + l.contribution, 0)
+    const reconciles = Math.abs(stored.direct + kitsSum - stored.total) < 0.01
+
+    // Recálculo con los datos actuales, usando la MISMA ventana que usó la corrida
+    const fresh = calcTotalComponentDemand(
+      data.salesHistory,
+      data.bomRows,
+      breakdownSku,
+      row.avg_sales_months,
+      nameBySku,
+      row.trim_extremes
+    )
+    // Comparamos el total Y línea por línea (kit + qty_per_kit): un kit reemplazado
+    // por otro con el mismo aporte da el mismo total, y sin esto pasaría desapercibido.
+    const lineKey = l => `${l.kit_sku}:${l.qty_per_kit}`
+    const storedKeys = stored.kit_lines.map(lineKey).sort().join('|')
+    const freshKeys = fresh.kit_lines.map(lineKey).sort().join('|')
+    const bomChanged =
+      Math.abs(fresh.total - stored.total) > 0.01 ||
+      storedKeys !== freshKeys
+
+    return { row, stored, kitsSum, reconciles, bomChanged }
+  }, [breakdownSku, data, enriched, nameBySku])
+
+  // ESC cierra el panel de desglose
+  useEffect(() => {
+    if (!breakdownSku) return
+    function onKey(e) { if (e.key === 'Escape') { setBreakdownSku(null); setExpandedKit(null) } }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [breakdownSku])
 
   const filtered = useMemo(() => {
     return enriched.filter(r => {
@@ -435,27 +719,6 @@ export default function ForecastView() {
     }
   }
 
-  // Arrastrar el handle del header para redimensionar una columna
-  function startResize(e, key) {
-    e.preventDefault()
-    e.stopPropagation() // no disparar el sort del th
-    const startX = e.clientX
-    const startWidth = colWidths[key] || DEFAULT_COL_WIDTHS[key] || 100
-
-    function onMove(ev) {
-      const newWidth = Math.max(MIN_COL_WIDTH, startWidth + (ev.clientX - startX))
-      setColWidths(prev => ({ ...prev, [key]: newWidth }))
-    }
-    function onUp() {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    document.body.style.userSelect = 'none' // evita selección de texto durante el drag
-  }
-
   const sorted = useMemo(() => {
     const arr = [...filtered]
     arr.sort((a, b) => {
@@ -478,8 +741,8 @@ export default function ForecastView() {
     [filtered]
   )
 
-  // Ancho total de la tabla = suma de anchos de columna (necesario con table-layout: fixed)
-  const totalWidth = COLUMNS.reduce((s, c) => s + (colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 100), 0)
+  // Ancho total de la tabla (necesario con table-layout: fixed) — lo calcula el hook
+  const totalWidth = cols.totalWidth
 
   // Landed cost por SKU desde purchase_params, para recalcular "Total Landed" en vivo (antes de guardar)
   const landedCostBySku = useMemo(() => {
@@ -612,9 +875,46 @@ export default function ForecastView() {
         </div>
         <div style={styles.headerControls}>
           <div style={styles.controlGroup}>
-            <label style={styles.controlLabel}>Months of history</label>
-            <select value={monthsBack} onChange={e => setMonthsBack(+e.target.value)} style={styles.select}>
-              {[3,4,5,6,9,12].map(m => <option key={m} value={m}>{m} months</option>)}
+            <label style={styles.controlLabel}>
+              Sales avg window (months)
+              {effectiveAvgMonths !== avgMonthsSaved && (
+                <span style={styles.overrideTag} title={`Valor guardado en Parameters: ${avgMonthsSaved}`}>
+                  override
+                </span>
+              )}
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              step={1}
+              value={avgMonthsGlobal}
+              onChange={e => {
+                const n = parseInt(e.target.value, 10)
+                setAvgMonthsGlobal(Number.isFinite(n) && n >= 1 ? n : '')
+              }}
+              onBlur={() => { if (avgMonthsGlobal === '' ) setAvgMonthsGlobal(avgMonthsSaved) }}
+              style={{ ...styles.select, width: 90 }}
+              title={`Ventana global. Se guarda en Parameters (actual: ${avgMonthsSaved}). Cambiarla acá aplica solo a esta sesión. Un SKU con Avg Months propio ignora este valor.`}
+            />
+          </div>
+          <div style={styles.controlGroup}>
+            <label style={styles.controlLabel}>
+              Trim extremes
+              {effectiveTrim !== trimSaved && (
+                <span style={styles.overrideTag} title={`Valor guardado en Parameters: ${trimSaved}`}>
+                  override
+                </span>
+              )}
+            </label>
+            <select
+              value={String(trimGlobal)}
+              onChange={e => setTrimGlobal(Number(e.target.value))}
+              style={{ ...styles.select, width: 110 }}
+              title={`Recorte global de extremos. Se guarda en Parameters (actual: ${trimSaved}). Cambiarlo acá aplica solo a esta sesión. Un SKU con Trim propio ignora este valor. Con ventana <= 4 meses no se recorta nunca.`}
+            >
+              <option value="0">No</option>
+              <option value="1">Sí</option>
             </select>
           </div>
           <button style={styles.refreshBtn} onClick={() => loadData({ refresh: true })} disabled={refreshing || loading}>
@@ -632,6 +932,8 @@ export default function ForecastView() {
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
+      {dataWarning && <div style={styles.warn}>⚠️ {dataWarning}</div>}
+      {saveInfo && <div style={styles.saveInfo}>✅ {saveInfo}</div>}
 
       {results.length > 0 && (
         <>
@@ -847,21 +1149,22 @@ export default function ForecastView() {
               <thead>
                 <tr style={styles.thead}>
                   {COLUMNS.map(col => {
-                    const w = colWidths[col.key] || DEFAULT_COL_WIDTHS[col.key] || 100
+                    // Las dos primeras columnas quedan fijas a la izquierda; su `left`
+                    // depende del ancho de la anterior, así que sigue al redimensionado.
                     const sticky = col.key === 'sku'
-                      ? { ...styles.stickyHeadSku, left: 0, width: w, minWidth: w, maxWidth: w }
+                      ? { ...styles.stickyHeadSku, left: 0 }
                       : col.key === 'name'
-                      ? { ...styles.stickyHeadName, left: colWidths.sku, width: w, minWidth: w, maxWidth: w }
+                      ? { ...styles.stickyHeadName, left: colWidths.sku }
                       : null
                     return (
-                      <th
+                      <ResizableTh
                         key={col.key}
+                        colKey={col.key}
+                        resize={cols}
                         style={{
                           ...styles.th,
                           ...(col.param ? styles.thParam : null),
-                          ...(sticky || { position: 'relative' }),
-                          width: w, minWidth: w, maxWidth: w,
-                          overflow: 'hidden',
+                          ...(sticky || null),
                           textAlign: col.align,
                           cursor: 'pointer',
                           userSelect: 'none',
@@ -878,17 +1181,7 @@ export default function ForecastView() {
                         {col.key === 'qty_transit' ? ' *' : ''}
                         {col.key === 'order_by_days' ? ' ⓘ' : ''}
                         {sortKey === col.key ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
-                        <span
-                          onMouseDown={e => startResize(e, col.key)}
-                          onClick={e => e.stopPropagation()}
-                          onMouseEnter={() => setHoverHandle(col.key)}
-                          onMouseLeave={() => setHoverHandle(null)}
-                          style={{
-                            ...styles.resizeHandle,
-                            background: hoverHandle === col.key ? 'rgba(120,150,230,0.9)' : 'rgba(255,255,255,0.18)',
-                          }}
-                        />
-                      </th>
+                      </ResizableTh>
                     )
                   })}
                 </tr>
@@ -904,7 +1197,15 @@ export default function ForecastView() {
                       <td style={styles.td}>
                         <span style={styles.supplierBadge}>{r.supplier || '—'}</span>
                       </td>
-                      <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.avg_monthly_sales_total)}</td>
+                      <td style={{ ...styles.td, textAlign: 'right', padding: 0 }}>
+                        <button
+                          style={styles.avgCellBtn}
+                          onClick={() => setBreakdownSku(r.sku)}
+                          title={`Ver de dónde sale este promedio (ventana: ${r.avg_sales_months} meses)`}
+                        >
+                          {fmt(r.avg_monthly_sales_total)}
+                        </button>
+                      </td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.projected_monthly_demand)}</td>
                       <td style={{ ...styles.td, textAlign: 'right', fontWeight: 700 }}>{fmt(r.qty_available_real)}</td>
                       <td style={{ ...styles.td, textAlign: 'right' }}>{fmt(r.qty_transit)}</td>
@@ -941,8 +1242,11 @@ export default function ForecastView() {
               </tbody>
             </table>
           </div>
-          <div style={styles.transitNote}>
-            * In Transit includes confirmed orders with status Ordered (from the latest run), so it may exceed what is recorded in transit_orders.
+          <div style={styles.tableFooterRow}>
+            <div style={styles.transitNote}>
+              * In Transit includes confirmed orders with status Ordered (from the latest run), so it may exceed what is recorded in transit_orders.
+            </div>
+            <ResetWidthsButton resize={cols} />
           </div>
         </>
       )}
@@ -954,6 +1258,141 @@ export default function ForecastView() {
             Make sure you have uploaded sales and inventory first.
           </p>
         </div>
+      )}
+
+      {/* Panel lateral: de dónde sale el Avg Sales/Mo */}
+      {breakdown && (
+        <>
+          <div style={styles.drawerBackdrop} onClick={() => setBreakdownSku(null)} />
+          <aside style={styles.drawer}>
+            <div style={styles.drawerHeader}>
+              <div>
+                <div style={styles.drawerSku}>{breakdown.row.sku}</div>
+                <div style={styles.drawerName}>{breakdown.row.name}</div>
+              </div>
+              <button style={styles.drawerClose} onClick={() => setBreakdownSku(null)} title="Cerrar (Esc)">
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.drawerWindow}>
+              <div>
+                Promedio de los últimos <strong>{breakdown.stored.months_used} meses</strong>
+                {breakdown.row.avg_sales_months_is_override
+                  ? ' · ventana propia de este SKU'
+                  : ' · ventana global'}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                Recorte de extremos: <strong>{breakdown.row.trim_extremes === 1 ? 'sí' : 'no'}</strong>
+                {breakdown.row.trim_extremes_is_override
+                  ? ' · valor propio de este SKU'
+                  : ' · valor global'}
+                {breakdown.row.trim_extremes === 1 && !breakdown.row.trim_applied
+                  ? ' — pedido pero NO aplicado'
+                  : ''}
+              </div>
+            </div>
+
+            {breakdown.bomChanged && (
+              <div style={styles.drawerWarn}>
+                ⚠️ El BOM o las ventas cambiaron en la base después de la última corrida, así que
+                este desglose puede no reflejar los datos actuales. Corré el forecast de nuevo
+                para actualizarlo.
+              </div>
+            )}
+
+            {!breakdown.reconciles && (
+              <div style={styles.drawerWarn}>
+                ⚠️ El desglose por kit no suma al total mostrado en la tabla. Es un síntoma de que
+                el BOM cambió desde el último forecast run. Corré el forecast de nuevo.
+              </div>
+            )}
+
+            <div style={styles.drawerRows}>
+              <div style={styles.drawerRow}>
+                <span style={styles.drawerRowLabel}>Venta directa</span>
+                <span style={styles.drawerRowVal}>{fmt(breakdown.row.avg_monthly_sales_direct)}</span>
+              </div>
+              <div style={styles.drawerRow}>
+                <span style={styles.drawerRowLabel}>Derivada de kits</span>
+                <span style={styles.drawerRowVal}>{fmt(breakdown.row.avg_monthly_sales_derived)}</span>
+              </div>
+              <div style={{ ...styles.drawerRow, ...styles.drawerRowTotal }}>
+                <span style={styles.drawerRowLabel}>Total (Avg Sales/Mo)</span>
+                {/* Misma expresión que la celda de la tabla: así el número coincide siempre */}
+                <span style={styles.drawerRowVal}>{fmt(breakdown.row.avg_monthly_sales_total)}</span>
+              </div>
+            </div>
+
+            <div style={styles.drawerSectionTitle}>Serie mensual — venta directa del componente</div>
+            <div style={styles.trimStatus}>{trimStatusText(breakdown.stored.direct_detail)}</div>
+            <MonthStrip detail={breakdown.stored.direct_detail} />
+
+            <div style={{ ...styles.drawerSectionTitle, marginTop: 22 }}>Desglose de la demanda derivada</div>
+
+            {breakdown.stored.kit_lines.length === 0 ? (
+              <div style={styles.drawerEmpty}>
+                Este componente no figura en ningún kit del BOM: todo su promedio es venta directa.
+              </div>
+            ) : (
+              <table style={styles.drawerTable}>
+                <thead>
+                  <tr>
+                    <th style={styles.drawerTh}>Kit SKU</th>
+                    <th style={styles.drawerTh}>Nombre</th>
+                    <th style={{ ...styles.drawerTh, textAlign: 'right' }}>Ventas/mes</th>
+                    <th style={{ ...styles.drawerTh, textAlign: 'right' }}>Qty/kit</th>
+                    <th style={{ ...styles.drawerTh, textAlign: 'right' }}>Aporte</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdown.stored.kit_lines.map(l => {
+                    const open = expandedKit === l.kit_sku
+                    return (
+                      <Fragment key={l.kit_sku}>
+                        <tr
+                          style={{ ...styles.drawerTr, ...styles.drawerTrClickable, ...(open ? styles.drawerTrOpen : null) }}
+                          onClick={() => setExpandedKit(open ? null : l.kit_sku)}
+                          title="Ver la serie mensual de este kit"
+                        >
+                          <td style={{ ...styles.drawerTd, fontFamily: 'monospace', fontSize: 11 }}>
+                            <span style={styles.caret}>{open ? '▾' : '▸'}</span>{l.kit_sku}
+                          </td>
+                          <td style={styles.drawerTd} title={l.kit_name || ''}>{l.kit_name || '—'}</td>
+                          <td style={{ ...styles.drawerTd, textAlign: 'right' }}>{fmt(l.kit_avg_monthly_sales)}</td>
+                          <td style={{ ...styles.drawerTd, textAlign: 'right' }}>{fmt(l.qty_per_kit)}</td>
+                          <td style={{ ...styles.drawerTd, textAlign: 'right', fontWeight: 600 }}>{fmt(l.contribution)}</td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={5} style={styles.drawerExpandCell}>
+                              <div style={styles.trimStatus}>{trimStatusText(l.detail)}</div>
+                              <MonthStrip detail={l.detail} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td style={styles.drawerTfoot} colSpan={4}>Total derivado</td>
+                    <td style={{ ...styles.drawerTfoot, textAlign: 'right' }}>
+                      {fmt(breakdown.row.avg_monthly_sales_derived)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+
+            <div style={styles.drawerNote}>
+              Los meses sin ventas cuentan como cero. No hay datos de stockout para excluirlos.
+              Con el recorte activo, un mes en cero es un candidato normal a ser el extremo bajo.
+              Clic en una fila de kit para ver su serie mensual.
+            </div>
+          </aside>
+        </>
       )}
     </div>
   )
@@ -971,7 +1410,9 @@ const styles = {
   runBtn: { background: '#1a1a2e', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
   refreshBtn: { background: '#fff', color: '#4455aa', border: '1.5px solid #c5ccea', borderRadius: 8, padding: '10px 16px', fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   exportBtn: { background: '#1F3864', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
-  error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20 },
+  error: { background: '#fff0f0', color: '#c00', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, whiteSpace: 'pre-wrap', lineHeight: 1.6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', border: '1.5px solid #f5c2c2', userSelect: 'text' },
+  warn: { background: '#fff4e5', color: '#8a5200', padding: '12px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, whiteSpace: 'pre-wrap', lineHeight: 1.6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', border: '1.5px solid #ffd9a0', userSelect: 'text' },
+  saveInfo: { background: '#eaf7ef', color: '#1a7a4a', padding: '11px 16px', borderRadius: 8, fontSize: 13, marginBottom: 20, border: '1.5px solid #bfe6cf' },
   summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
   summaryCard: { background: '#fff', borderRadius: 10, padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
   summaryVal: { fontSize: 26, fontWeight: 700, color: '#1a1a2e' },
@@ -1013,12 +1454,11 @@ const styles = {
   quickInput: { width: 130, padding: '7px 9px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, boxSizing: 'border-box' },
   quickApplyBtn: { padding: '8px 16px', border: 'none', borderRadius: 8, background: '#1a1a2e', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  transitNote: { marginTop: 8, fontSize: 11, color: '#888', fontStyle: 'italic' },
+  transitNote: { fontSize: 11, color: '#888', fontStyle: 'italic' },
+  tableFooterRow: { display: 'flex', alignItems: 'center', gap: 16, marginTop: 8, flexWrap: 'wrap' },
   table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
-  // Handle de resize: franja vertical de 4px en el borde derecho del header
-  resizeHandle: { position: 'absolute', top: 0, right: 0, height: '100%', width: 4, cursor: 'col-resize' },
   // Header gris para columnas de input (parámetros), distinto del header oscuro de los outputs
   thParam: { background: '#c8cdd8', color: '#2a2f3a' },
   // Celdas de parámetros con fondo levemente gris para reforzar el agrupamiento
@@ -1034,4 +1474,43 @@ const styles = {
   supplierBadge: { background: '#eef0ff', color: '#4455aa', borderRadius: 4, padding: '2px 7px', fontSize: 11, fontWeight: 600 },
   coverageBadge: { borderRadius: 4, padding: '2px 7px', fontSize: 12, fontWeight: 600 },
   empty: { textAlign: 'center', padding: '60px 20px', color: '#888', background: '#fff', borderRadius: 12 },
+  overrideTag: { marginLeft: 6, background: '#ffe9a8', color: '#7a5c00', borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 700, textTransform: 'uppercase' },
+  // Celda de Avg Sales/Mo: se ve como texto pero es un botón, ocupa toda la celda
+  avgCellBtn: { width: '100%', padding: '9px 14px', border: 'none', background: 'transparent', font: 'inherit', fontSize: 13, color: '#2f4bbd', textAlign: 'right', cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3 },
+  // Panel lateral del desglose
+  drawerBackdrop: { position: 'fixed', inset: 0, background: 'rgba(20,22,40,0.34)', zIndex: 40 },
+  drawer: { position: 'fixed', top: 0, right: 0, height: '100vh', width: 'min(560px, 100vw)', background: '#fff', boxShadow: '-6px 0 24px rgba(0,0,0,0.18)', zIndex: 50, padding: 22, overflowY: 'auto', boxSizing: 'border-box' },
+  drawerHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
+  drawerSku: { fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: '#1a1a2e' },
+  drawerName: { fontSize: 13, color: '#666', marginTop: 2 },
+  drawerClose: { border: 'none', background: '#f0f1f5', borderRadius: 6, width: 30, height: 30, fontSize: 15, color: '#666', cursor: 'pointer', flexShrink: 0 },
+  drawerWindow: { background: '#eef0ff', color: '#3a4a8a', borderRadius: 8, padding: '9px 12px', fontSize: 12, marginBottom: 14 },
+  drawerWarn: { background: '#fff4e5', border: '1.5px solid #ffd9a0', color: '#8a5200', borderRadius: 8, padding: '10px 12px', fontSize: 12, marginBottom: 14, lineHeight: 1.5 },
+  drawerRows: { border: '1px solid #ececf0', borderRadius: 10, overflow: 'hidden', marginBottom: 22 },
+  drawerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 14px', borderBottom: '1px solid #f2f2f5', fontSize: 13 },
+  drawerRowTotal: { background: '#f7f8ff', fontWeight: 700, borderBottom: 'none', fontSize: 14 },
+  drawerRowLabel: { color: '#555' },
+  drawerRowVal: { fontVariantNumeric: 'tabular-nums', color: '#1a1a2e', fontWeight: 600 },
+  drawerSectionTitle: { fontSize: 11, fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  drawerEmpty: { fontSize: 12, color: '#888', background: '#fafafc', borderRadius: 8, padding: '14px 12px', lineHeight: 1.5 },
+  drawerTable: { width: '100%', borderCollapse: 'collapse', fontSize: 12 },
+  drawerTh: { padding: '8px 9px', background: '#1a1a2e', color: '#fff', fontSize: 10, fontWeight: 600, textAlign: 'left', textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' },
+  drawerTr: { borderBottom: '1px solid #f2f2f5' },
+  drawerTd: { padding: '8px 9px', color: '#333', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' },
+  drawerTfoot: { padding: '9px', background: '#f7f8ff', fontWeight: 700, color: '#1a1a2e', fontSize: 12, borderTop: '1.5px solid #dfe3f5', fontVariantNumeric: 'tabular-nums' },
+  trimStatus: { fontSize: 12, color: '#555', background: '#fafafc', borderRadius: 6, padding: '8px 10px', marginBottom: 10, lineHeight: 1.5 },
+  strip: { display: 'flex', flexWrap: 'wrap', gap: 5 },
+  stripCell: { minWidth: 56, flex: '0 0 auto', border: '1.5px solid #dfe3f5', background: '#f7f8ff', borderRadius: 7, padding: '6px 7px', textAlign: 'center' },
+  stripCellOut: { border: '1.5px dashed #d8d8dd', background: '#f4f4f6' },
+  stripMonth: { fontSize: 9.5, color: '#8a90a8', textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap' },
+  stripQty: { fontSize: 14, fontWeight: 700, color: '#1a1a2e', fontVariantNumeric: 'tabular-nums', lineHeight: 1.3 },
+  stripQtyOut: { color: '#b0b0b8', textDecoration: 'line-through' },
+  stripMark: { fontSize: 8.5, color: '#9a8050', fontWeight: 700, height: 11, lineHeight: '11px', whiteSpace: 'nowrap' },
+  stripMath: { marginTop: 9, fontSize: 12, color: '#3a4a8a', fontVariantNumeric: 'tabular-nums' },
+  stripEmpty: { fontSize: 12, color: '#999', fontStyle: 'italic' },
+  drawerTrClickable: { cursor: 'pointer' },
+  drawerTrOpen: { background: '#f7f8ff' },
+  caret: { display: 'inline-block', width: 12, color: '#8a90a8' },
+  drawerExpandCell: { padding: '12px 10px 16px', background: '#fcfcfe', borderBottom: '1px solid #ececf0' },
+  drawerNote: { marginTop: 16, fontSize: 11, color: '#888', fontStyle: 'italic', lineHeight: 1.5 },
 }

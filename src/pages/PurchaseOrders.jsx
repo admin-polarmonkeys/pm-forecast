@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 // --- Helpers para exportar a Excel ---
 const XLS_HEADER_STYLE = {
@@ -110,7 +111,13 @@ const STATUS_OPTIONS = [
 const statusColor = v => STATUS_OPTIONS.find(s => s.value === (v || ''))?.color || 'transparent'
 const statusLabel = v => (v ? (STATUS_OPTIONS.find(s => s.value === v)?.label || '') : '')
 
+const DEFAULT_COL_WIDTHS = {
+  sku: 130, name: 220, qty_suggested: 120, confirmed_qty: 120, fob_cost: 110,
+  total_fob: 120, landed_cost: 115, total_landed: 125, status: 130, notes: 200,
+}
+
 export default function PurchaseOrders() {
+  const colWidths = useColumnWidths('purchase_orders', DEFAULT_COL_WIDTHS)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [noRun, setNoRun] = useState(false)
@@ -449,6 +456,7 @@ export default function PurchaseOrders() {
               onClick={() => setView('confirmado')}
             >✅ Confirmed</button>
           </div>
+          <ResetWidthsButton resize={colWidths} />
           <button style={styles.exportBtn} onClick={exportToExcel} disabled={!visibleGroups.length}>
             ⬇️ Export to Excel
           </button>
@@ -562,19 +570,19 @@ export default function PurchaseOrders() {
             <div key={g.supplier} style={styles.section}>
               <h2 style={styles.sectionTitle}>{g.supplier}</h2>
               <div style={styles.tableWrap}>
-                <table style={styles.table}>
+                <table style={{ ...styles.table, minWidth: colWidths.totalWidth, width: '100%' }}>
                   <thead>
                     <tr style={styles.thead}>
-                      <th style={styles.th}>SKU</th>
-                      <th style={styles.th}>Name</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Qty Suggested</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Confirmed Qty</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>FOB Cost</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Total FOB</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Landed Cost</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Total Landed</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Status</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Notes</th>
+                      <ResizableTh colKey="sku" resize={colWidths} style={styles.th}>SKU</ResizableTh>
+                      <ResizableTh colKey="name" resize={colWidths} style={styles.th}>Name</ResizableTh>
+                      <ResizableTh colKey="qty_suggested" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>Qty Suggested</ResizableTh>
+                      <ResizableTh colKey="confirmed_qty" resize={colWidths} style={{ ...styles.th, textAlign: 'center' }}>Confirmed Qty</ResizableTh>
+                      <ResizableTh colKey="fob_cost" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>FOB Cost</ResizableTh>
+                      <ResizableTh colKey="total_fob" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>Total FOB</ResizableTh>
+                      <ResizableTh colKey="landed_cost" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>Landed Cost</ResizableTh>
+                      <ResizableTh colKey="total_landed" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>Total Landed</ResizableTh>
+                      <ResizableTh colKey="status" resize={colWidths} style={{ ...styles.th, textAlign: 'center' }}>Status</ResizableTh>
+                      <ResizableTh colKey="notes" resize={colWidths} style={{ ...styles.th, textAlign: 'center' }}>Notes</ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
@@ -709,7 +717,7 @@ const styles = {
   section: { marginBottom: 28 },
   sectionTitle: { fontSize: 18, fontWeight: 700, color: '#1a1a2e', marginBottom: 12 },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  table: { width: '100%', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f0f0f0' },

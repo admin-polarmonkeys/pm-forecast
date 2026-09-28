@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
@@ -68,6 +69,19 @@ export default function SalesHistory() {
     return [...seen.values()].sort((a, b) => a.year - b.year || a.month - b.month)
   }, [sales])
 
+  // Anchos de columna. La tabla es dinámica (una columna por mes), así que los
+  // defaults se recalculan cuando cambia `months`: un mes nuevo aparece con su
+  // ancho por defecto y los anchos ya ajustados por el usuario no se pierden,
+  // porque el hook guarda los overrides por clave de columna, no por posición.
+  const colDefaults = useMemo(() => {
+    const d = { sku: 130, name: 220 }
+    for (const m of months) d['m:' + m.key] = 74
+    return d
+  }, [months])
+  const cols = useColumnWidths('sales_by_sku', colDefaults)
+  const wSku = cols.widths.sku
+  const wName = cols.widths.name
+
   // Lookup: qty[sku][year-month] = qty_fulfilled
   const qtyMap = useMemo(() => {
     const map = {}
@@ -135,6 +149,7 @@ export default function SalesHistory() {
           &nbsp;Only SKUs with at least one sale
         </label>
         <span style={styles.filterTotal}>{filteredRows.length} SKUs visible</span>
+        <ResetWidthsButton resize={cols} />
       </div>
 
       {months.length === 0 ? (
@@ -146,15 +161,27 @@ export default function SalesHistory() {
         </div>
       ) : (
         <div style={styles.tableWrap}>
-          <table style={styles.table}>
+          <table style={{ ...styles.table, width: cols.totalWidth }}>
             <thead>
               <tr style={styles.thead}>
-                <th style={{ ...styles.th, ...styles.stickyCol, ...styles.stickyHead, textAlign: 'left' }}>SKU</th>
-                <th style={{ ...styles.th, ...styles.stickyColName, ...styles.stickyHead, textAlign: 'left' }}>Name</th>
+                <ResizableTh
+                  colKey="sku"
+                  resize={cols}
+                  style={{ ...styles.th, ...styles.stickyHead, position: 'sticky', left: 0, textAlign: 'left' }}
+                >
+                  SKU
+                </ResizableTh>
+                <ResizableTh
+                  colKey="name"
+                  resize={cols}
+                  style={{ ...styles.th, ...styles.stickyHead, position: 'sticky', left: wSku, textAlign: 'left' }}
+                >
+                  Name
+                </ResizableTh>
                 {months.map(m => (
-                  <th key={m.key} style={{ ...styles.th, textAlign: 'right' }}>
+                  <ResizableTh key={m.key} colKey={'m:' + m.key} resize={cols} style={{ ...styles.th, textAlign: 'right' }}>
                     {MONTH_ABBR[m.month - 1]} {String(m.year).slice(2)}
-                  </th>
+                  </ResizableTh>
                 ))}
               </tr>
             </thead>
@@ -166,8 +193,8 @@ export default function SalesHistory() {
                 const max = nonZero.length ? Math.max(...nonZero) : 0
                 return (
                   <tr key={r.sku} style={styles.tr}>
-                    <td style={{ ...styles.td, ...styles.stickyCol, fontFamily: 'monospace', fontSize: 12 }}>{r.sku}</td>
-                    <td style={{ ...styles.td, ...styles.stickyColName }}>{r.name}</td>
+                    <td style={{ ...styles.td, ...styles.stickyCol, left: 0, width: wSku, minWidth: wSku, maxWidth: wSku, fontFamily: 'monospace', fontSize: 12 }}>{r.sku}</td>
+                    <td style={{ ...styles.td, ...styles.stickyColName, left: wSku, width: wName, minWidth: wName, maxWidth: wName }}>{r.name}</td>
                     {months.map(m => {
                       const v = cells[m.key]
                       const bg = cellColor(v, min, max)
@@ -208,7 +235,7 @@ const styles = {
   checkLabel: { fontSize: 13, color: '#555', display: 'flex', alignItems: 'center', cursor: 'pointer' },
   filterTotal: { fontSize: 13, fontWeight: 700, color: '#1a1a2e', marginLeft: 'auto' },
   tableWrap: { overflowX: 'auto', borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' },
-  table: { borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '11px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #f0f0f0' },

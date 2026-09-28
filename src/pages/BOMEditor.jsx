@@ -1,11 +1,15 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
+import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 // Etiqueta para los kits que todavía no tienen filas en bom. Ojo: variant_group vive en la
 // tabla bom (se repite en cada fila), no en products. Un kit sin componentes no tiene grupo.
 const NO_GROUP = '— No variant group —'
 
+const DEFAULT_COL_WIDTHS = { component_sku: 220, component_name: 300, qty: 120, actions: 120 }
+
 export default function BOMEditor() {
+  const colWidths = useColumnWidths('bom_editor', DEFAULT_COL_WIDTHS)
   const [products, setProducts] = useState([])
   const [bomRows, setBomRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -456,6 +460,7 @@ export default function BOMEditor() {
                   <div style={styles.detailSku}>{selectedKit}</div>
                 </div>
                 <div style={styles.detailActions}>
+                  <ResetWidthsButton resize={colWidths} />
                   {dirty && <span style={styles.dirtyTag}>● Unsaved changes</span>}
                   <button
                     style={{ ...styles.primaryBtn, ...(canSave ? null : styles.btnDisabled) }}
@@ -492,13 +497,13 @@ export default function BOMEditor() {
               </div>
 
               <div style={styles.tableWrap}>
-                <table style={styles.table}>
+                <table style={{ ...styles.table, minWidth: colWidths.totalWidth, width: '100%' }}>
                   <thead style={styles.thead}>
                     <tr>
-                      <th style={styles.th}>Component SKU</th>
-                      <th style={styles.th}>Component Name</th>
-                      <th style={{ ...styles.th, textAlign: 'right' }}>Qty per Kit</th>
-                      <th style={{ ...styles.th, textAlign: 'center' }}>Actions</th>
+                      <ResizableTh colKey="component_sku" resize={colWidths} style={styles.th}>Component SKU</ResizableTh>
+                      <ResizableTh colKey="component_name" resize={colWidths} style={styles.th}>Component Name</ResizableTh>
+                      <ResizableTh colKey="qty" resize={colWidths} style={{ ...styles.th, textAlign: 'right' }}>Qty per Kit</ResizableTh>
+                      <ResizableTh colKey="actions" resize={colWidths} style={{ ...styles.th, textAlign: 'center' }}>Actions</ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
@@ -607,7 +612,7 @@ const styles = {
   input: { padding: '7px 10px', border: '1.5px solid #e0e0e0', borderRadius: 6, fontSize: 13, minWidth: 200 },
   inputError: { borderColor: '#e08080', background: '#fff8f8' },
   tableWrap: { overflowX: 'auto', borderRadius: 10, border: '1px solid #eee' },
-  table: { width: '100%', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
+  table: { tableLayout: 'fixed', borderCollapse: 'collapse', background: '#fff', fontSize: 13 },
   thead: { background: '#1a1a2e' },
   th: { padding: '10px 14px', color: '#fff', fontWeight: 600, fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' },
   trEven: { background: '#fff', borderBottom: '1px solid #f0f0f0' },
