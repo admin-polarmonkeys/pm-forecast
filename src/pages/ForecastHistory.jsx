@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/fetchAll'
 import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 function fmt(n) {
@@ -62,8 +63,8 @@ export default function ForecastHistory() {
     setError(null)
     try {
       const [runsRes, ordersRes, prodRes] = await Promise.all([
-        supabase.from('forecast_runs').select('*').order('created_at', { ascending: false }),
-        supabase.from('purchase_orders').select('*'),
+        fetchAll('forecast_runs', '*', { orderBy: [['created_at', { ascending: false }]] }),
+        fetchAll('purchase_orders', '*'),
         supabase.from('products').select('sku, name'),
       ])
       if (runsRes.error) throw runsRes.error

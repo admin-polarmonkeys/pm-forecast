@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/fetchAll'
 import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 // Columnas de la tabla (mismas que se exportan a Excel)
@@ -56,7 +57,7 @@ export default function InventoryValue() {
     setLoading(true)
     try {
       const [inventory, params, products] = await Promise.all([
-        supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
+        fetchAll('inventory_snapshots', '*', { orderBy: [['snapshot_date', { ascending: false }]] }),
         supabase.from('purchase_params').select('*'),
         supabase.from('products').select('*'),
       ])

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/fetchAll'
 import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 import {
   runForecast,
@@ -313,8 +314,8 @@ export default function ForecastView() {
       const [products, bom, sales, inventory, params, transit, latestRun, settings] = await Promise.all([
         supabase.from('products').select('*'),
         supabase.from('bom').select('*'),
-        supabase.from('sales_history').select('*'),
-        supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
+        fetchAll('sales_history', '*'),
+        fetchAll('inventory_snapshots', '*', { orderBy: [['snapshot_date', { ascending: false }]] }),
         supabase.from('purchase_params').select('*'),
         supabase.from('transit_orders').select('sku, qty'),
         supabase.from('forecast_runs').select('id').order('created_at', { ascending: false }).limit(1),

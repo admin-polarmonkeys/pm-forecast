@@ -9,9 +9,15 @@ CREATE TABLE IF NOT EXISTS products (
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('kit', 'component')),
   is_active BOOLEAN DEFAULT TRUE,
+  -- Canal de venta del kit: 'Commercial', 'Residential', 'Contrast' o 'Accessories'.
+  -- Lo usa el breakdown por canal de Sales History by Kit. NULL = "Sin clasificar".
+  channel TEXT,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migración para bases ya creadas
+ALTER TABLE products ADD COLUMN IF NOT EXISTS channel TEXT;
 
 -- 2. BOM — bill of materials
 CREATE TABLE IF NOT EXISTS bom (
@@ -58,6 +64,7 @@ CREATE TABLE IF NOT EXISTS purchase_params (
   growth_factor NUMERIC NOT NULL DEFAULT 1.40,
   moq INT NOT NULL DEFAULT 1,
   supplier TEXT,
+  fob_cost_usd NUMERIC,
   landed_cost_usd NUMERIC,
   -- Ventana de meses para el promedio de ventas de ESTE SKU.
   -- NULL = usar el default global de app_settings('avg_sales_months').
@@ -72,6 +79,7 @@ CREATE TABLE IF NOT EXISTS purchase_params (
 );
 
 -- Migración para bases ya creadas
+ALTER TABLE purchase_params ADD COLUMN IF NOT EXISTS fob_cost_usd NUMERIC;
 ALTER TABLE purchase_params ADD COLUMN IF NOT EXISTS avg_sales_months INT;
 ALTER TABLE purchase_params ADD COLUMN IF NOT EXISTS trim_extremes INT;
 
@@ -109,9 +117,36 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   qty_suggested INT,
   total_landed_cost NUMERIC,
   supplier TEXT,
+  -- Demanda desglosada: venta directa del componente + derivada de kits vía BOM
+  avg_monthly_sales_direct NUMERIC,
+  avg_monthly_sales_derived NUMERIC,
+  -- Parámetros usados en el cálculo, copiados de purchase_params (panel de detalle)
+  growth_factor NUMERIC,
+  lead_time_weeks INT,
+  coverage_target_months NUMERIC,
+  moq INT,
+  fob_cost_usd NUMERIC,
+  landed_cost_usd NUMERIC,
+  -- Seguimiento de la orden (página Purchase Orders)
+  -- order_status: NULL, 'revision', 'negociacion', 'ordenado', 'bloqueado'.
+  -- Las 'ordenado' de la última corrida cuentan como tránsito en el forecast.
+  order_status TEXT,
+  confirmed_qty INT,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migración para bases ya creadas
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS avg_monthly_sales_direct NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS avg_monthly_sales_derived NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS growth_factor NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS lead_time_weeks INT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS coverage_target_months NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS moq INT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS fob_cost_usd NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS landed_cost_usd NUMERIC;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS order_status TEXT;
+ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS confirmed_qty INT;
 
 -- ============================================================
 -- ROW LEVEL SECURITY — solo usuarios autenticados
@@ -201,5 +236,31 @@ BEGIN
     WHERE schemaname = 'public' AND tablename = 'app_settings' AND policyname = 'auth_only'
   ) THEN
     CREATE POLICY "auth_only" ON app_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- ============================================================
+-- 10. TRANSIT_ORDERS — inventario en tránsito cargado a mano (Upload Data)
+-- Si tiene filas, es la fuente de verdad del tránsito y reemplaza a
+-- inventory_snapshots.qty_transit (ver forecast.js).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS transit_orders (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  sku TEXT NOT NULL,
+  qty INT NOT NULL,
+  expected_date DATE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE transit_orders ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'transit_orders' AND policyname = 'auth_only'
+  ) THEN
+    CREATE POLICY "auth_only" ON transit_orders FOR ALL TO authenticated USING (true) WITH CHECK (true);
   END IF;
 END $$;

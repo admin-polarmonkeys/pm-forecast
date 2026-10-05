@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/fetchAll'
 import { useColumnWidths, ResizableTh, ResetWidthsButton } from '../lib/useColumnWidths'
 
 const MONTH_ABBR = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
@@ -45,7 +46,7 @@ export default function SalesHistory() {
     try {
       const [prod, sal] = await Promise.all([
         supabase.from('products').select('sku, name'),
-        supabase.from('sales_history').select('sku, year, month, qty_fulfilled'),
+        fetchAll('sales_history', 'sku, year, month, qty_fulfilled'),
       ])
       if (prod.error) throw prod.error
       if (sal.error) throw sal.error

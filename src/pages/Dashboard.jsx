@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/fetchAll'
 import {
   calcAvgMonthlySales,
   buildSalesIndex,
@@ -43,8 +44,8 @@ export default function Dashboard() {
     try {
       const [products, inv, sales, transit, params, runs, settings] = await Promise.all([
         supabase.from('products').select('sku, name, type'),
-        supabase.from('inventory_snapshots').select('*').order('snapshot_date', { ascending: false }),
-        supabase.from('sales_history').select('sku, year, month, qty_fulfilled, created_at'),
+        fetchAll('inventory_snapshots', '*', { orderBy: [['snapshot_date', { ascending: false }]] }),
+        fetchAll('sales_history', 'sku, year, month, qty_fulfilled, created_at'),
         supabase.from('transit_orders').select('sku, qty'),
         supabase.from('purchase_params').select('sku, supplier, avg_sales_months, trim_extremes'),
         supabase.from('forecast_runs').select('id, run_date, created_at').order('created_at', { ascending: false }).limit(1),
